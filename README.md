@@ -12,11 +12,11 @@ Please check [VapourSynth-BM3D](https://github.com/HomeOfVapourSynthEvolution/Va
 
 - CPU with AVX support.
 
-- CUDA-enabled GPU(s) with [compute capability](https://developer.nvidia.com/cuda-gpus) 5.0 or higher.
+- CUDA-enabled GPU(s) of [compute capability](https://developer.nvidia.com/cuda-gpus) 5.0 or higher.
 
 - GPU driver 450 or newer.
 
-The minimum requirement is compute capability 3.5, which requires manual compilation (specifying nvcc flag `-gencode arch=compute_35,code=sm_35`).
+The minimum requirement on compute capability is 3.0, which requires manual compilation (specifying nvcc flag `-gencode arch=compute_30,code=sm_30`).
 
 ## Parameters
 
