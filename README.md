@@ -29,7 +29,7 @@ bm3dcuda.BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_step=8, 
 
 - ref:<br />
     The reference clip. Must be of the same format, width, height, number of frames as `clip`.<br />
-    Used in block-matching and as the reference in empirical Wiener filtering.
+    Used in block-matching and as the reference in empirical Wiener filtering, i.e. `bm3d.Final / bm3d.VFinal`.
 
 - sigma:<br />
     The strength of denoising for each plane.<br />
@@ -61,7 +61,7 @@ bm3dcuda.BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_step=8, 
 ## Statistics
 
 GPU memory consumptions:<br />
-`(ref ? 2 : 1) * (chroma ? 3 : 1) * (fast ? 4 : 1) * (6 * radius + 3) * size_of_a_single_frame`
+`(chroma ? 3 : 1) * (fast ? 4 : 1) * (6 * radius + (ref ? 4 : 3)) * size_of_a_single_frame`
 
 ## Compilation on Linux
 
