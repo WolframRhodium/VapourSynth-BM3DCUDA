@@ -1,0 +1,30 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.31205.134
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "BM3DCUDA", "BM3DCUDA.vcxproj", "{6293E990-5F6E-412D-A25A-992B109277A6}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{6293E990-5F6E-412D-A25A-992B109277A6}.Debug|x64.ActiveCfg = Debug|x64
+		{6293E990-5F6E-412D-A25A-992B109277A6}.Debug|x64.Build.0 = Debug|x64
+		{6293E990-5F6E-412D-A25A-992B109277A6}.Debug|x86.ActiveCfg = Release|x64
+		{6293E990-5F6E-412D-A25A-992B109277A6}.Debug|x86.Build.0 = Release|x64
+		{6293E990-5F6E-412D-A25A-992B109277A6}.Release|x64.ActiveCfg = Release|x64
+		{6293E990-5F6E-412D-A25A-992B109277A6}.Release|x64.Build.0 = Release|x64
+		{6293E990-5F6E-412D-A25A-992B109277A6}.Release|x86.ActiveCfg = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {F830CE6B-F120-4AF6-BBD7-0AB12B3522B1}
+	EndGlobalSection
+EndGlobal
