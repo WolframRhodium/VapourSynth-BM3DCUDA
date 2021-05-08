@@ -61,7 +61,7 @@ bm3dcuda.BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_step=8, 
 ## Statistics
 
 GPU memory consumptions:<br />
-`(chroma ? 3 : 1) * (fast ? 4 : 1) * (6 * radius + (ref ? 4 : 3)) * size_of_a_single_frame`
+`(ref ? 4 : 3) * (chroma ? 3 : 1) * (fast ? 4 : 1) * (2 * radius + 1) * size_of_a_single_frame`
 
 ## Compilation on Linux
 
