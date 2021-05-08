@@ -14,7 +14,7 @@ Please check [VapourSynth-BM3D](https://github.com/HomeOfVapourSynthEvolution/Va
 
 - CUDA-enabled GPU(s) with [compute capability](https://developer.nvidia.com/cuda-gpus) 5.0 or higher.
 
-- CUDA driver 450 or newer.
+- GPU driver 450 or newer.
 
 The minimum requirement is compute capability 3.5, which requires manual compilation (specifying nvcc flag `-gencode arch=compute_35,code=sm_35`).
 
