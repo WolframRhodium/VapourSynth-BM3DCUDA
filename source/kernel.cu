@@ -413,9 +413,12 @@ static void bm3d(
     const int sub_lane_id = lane_id % 8; // 0 ~ 7
     int x = (4 * blockIdx.x + lane_id / 8) * block_step;
     int y = block_step * blockIdx.y;
-    if (x > width - 8 || y > height - 8) {
+    if (x >= width || y >= height) {
         return;
     }
+
+    x = min(x, width - 8);
+    y = min(y, height - 8);
 
     int radius = 0;
     if constexpr (temporal) {
