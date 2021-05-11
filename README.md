@@ -67,12 +67,12 @@ GPU memory consumptions:<br />
 
 - g++ 11 (or higher) is required to compile `source.cpp`, while nvcc 11.3 only supports g++ 10 or older.
 
-- Unused nvcc flags may be removed. [Documentation for --gencode](https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/index.html#options-for-steering-gpu-code-generation-generate-code)
+- Unused nvcc flags may be removed. [Documentation for -gencode](https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/index.html#options-for-steering-gpu-code-generation-generate-code)
 
 ```
 cd source
 
-nvcc kernel.cu -c --use_fast_math --std=c++17 --compiler-bindir g++-10 -gencode arch=compute_50,code=\"sm_50,compute_50\" -gencode arch=compute_52,code=sm_52 -gencode arch=compute_61,code=sm_61 -gencode arch=compute_75,code=sm_75 -gencode arch=compute_86,code=\"sm_86,compute_86\" -t 0 --compiler-bindir g++-10 -o kernel.o
+nvcc kernel.cu -c --use_fast_math --std=c++17 -gencode arch=compute_50,code=\"sm_50,compute_50\" -gencode arch=compute_52,code=sm_52 -gencode arch=compute_61,code=sm_61 -gencode arch=compute_75,code=sm_75 -gencode arch=compute_86,code=\"sm_86,compute_86\" -t 0 --compiler-bindir g++-10 -o kernel.o
 
 g++-11 source.cpp kernel.o -shared -fPIC -I/usr/local/cuda-11.3/include -I/usr/local/include -L/usr/local/cuda-11.3/lib64 -lcudart_static --std=c++20 -march=native -o libbm3dcuda.so
 ```
