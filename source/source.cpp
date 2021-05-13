@@ -22,7 +22,6 @@
 #include <atomic>
 #include <limits>
 #include <memory>
-#include <semaphore>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -51,6 +50,26 @@ extern cudaGraphExec_t get_graphexec(
 
 constexpr int kFast = 4;
 
+template <int num_resources>
+struct ticket_semaphore {
+    std::atomic<int> ticket {};
+    std::atomic<int> current { num_resources - 1 };
+
+    void acquire() {
+        int tk { ticket.fetch_add(1, std::memory_order::relaxed) };
+        int curr { current.load(std::memory_order::acquire) };
+        while (curr < tk) {
+            current.wait(curr, std::memory_order::relaxed);
+            curr = current.load(std::memory_order::acquire);
+        }
+    }
+
+    void release() {
+        current.fetch_add(1, std::memory_order::release);
+        current.notify_all();
+    }
+};
+
 struct BM3DData {
     VSNodeRef * node;
     VSNodeRef * ref_node;
@@ -70,7 +89,7 @@ struct BM3DData {
     int d_pitch;
     int device_id;
 
-    std::counting_semaphore<kFast> num_resourses { kFast };
+    ticket_semaphore<kFast> num_resources;
     std::atomic_flag locks[kFast];
     float *d_srcs[kFast], *d_ress[kFast];
     float *h_ress[kFast];
@@ -179,7 +198,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
 
         int lock_idx = 0;
         if (d->num_copy_engines > 1) {
-            d->num_resourses.acquire();
+            d->num_resources.acquire();
 
             for (int i = 0; i < d->num_copy_engines; ++i) {
                 if (!d->locks[i].test_and_set(std::memory_order::acquire)) {
@@ -327,7 +346,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
 FINALIZE:
         if (d->num_copy_engines > 1) {
             d->locks[lock_idx].clear(std::memory_order::release);
-            d->num_resourses.release();
+            d->num_resources.release();
         }
 
         for (int i = 0; i < num_input_frames; ++i) {
