@@ -22,6 +22,7 @@
 #include <atomic>
 #include <limits>
 #include <memory>
+#include <new>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -52,15 +53,20 @@ constexpr int kFast = 4;
 
 template <int num_resources>
 struct ticket_semaphore {
-    std::atomic<int> ticket {};
-    std::atomic<int> current { num_resources - 1 };
+private:
+    alignas(std::hardware_destructive_interference_size) std::atomic<int> ticket {};
+    alignas(std::hardware_destructive_interference_size) std::atomic<int> current 
+        { num_resources - 1 };
 
+public:
     void acquire() {
-        int tk { ticket.fetch_add(1, std::memory_order::relaxed) };
-        int curr { current.load(std::memory_order::acquire) };
-        while (curr < tk) {
+        int tk { ticket.fetch_add(1, std::memory_order::acquire) };
+        while (true) {
+            int curr { current.load(std::memory_order::acquire) };
+            if (tk <= curr) {
+                return;
+            }
             current.wait(curr, std::memory_order::relaxed);
-            curr = current.load(std::memory_order::acquire);
         }
     }
 
@@ -89,7 +95,7 @@ struct BM3DData {
     int d_pitch;
     int device_id;
 
-    ticket_semaphore<kFast> num_resources;
+    ticket_semaphore<kFast> resources;
     std::atomic_flag locks[kFast];
     float *d_srcs[kFast], *d_ress[kFast];
     float *h_ress[kFast];
@@ -198,7 +204,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
 
         int lock_idx = 0;
         if (d->num_copy_engines > 1) {
-            d->num_resources.acquire();
+            d->resources.acquire();
 
             for (int i = 0; i < d->num_copy_engines; ++i) {
                 if (!d->locks[i].test_and_set(std::memory_order::acquire)) {
@@ -346,7 +352,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
 FINALIZE:
         if (d->num_copy_engines > 1) {
             d->locks[lock_idx].clear(std::memory_order::release);
-            d->num_resources.release();
+            d->resources.release();
         }
 
         for (int i = 0; i < num_input_frames; ++i) {
