@@ -22,10 +22,8 @@
 #include <atomic>
 #include <limits>
 #include <memory>
-#include <new>
 #include <string>
 #include <thread>
-#include <type_traits>
 
 #include "cuda_runtime.h"
 
@@ -54,8 +52,8 @@ constexpr int kFast = 4;
 template <int num_resources>
 struct ticket_semaphore {
 private:
-    alignas(std::hardware_destructive_interference_size) std::atomic<int> ticket {};
-    alignas(std::hardware_destructive_interference_size) std::atomic<int> current 
+    std::atomic<int> ticket {};
+    std::atomic<int> current 
         { num_resources - 1 };
 
 public:
@@ -445,7 +443,7 @@ static void VS_CC BM3DCreate(
     }
     d->final_ = final_;
 
-    for (unsigned i = 0; i < std::extent_v<decltype(d->sigma)>; ++i) {
+    for (int i = 0; i < std::ssize(d->sigma); ++i) {
         float sigma = static_cast<float>(
             vsapi->propGetFloat(in, "sigma", i, &error));
 
@@ -467,7 +465,7 @@ static void VS_CC BM3DCreate(
         d->sigma[i] = sigma;
     }
 
-    for (unsigned i = 0; i < std::extent_v<decltype(d->block_step)>; ++i) {
+    for (int i = 0; i < std::ssize(d->block_step); ++i) {
         int block_step = int64ToIntS(
             vsapi->propGetInt(in, "block_step", i, &error));
 
@@ -480,7 +478,7 @@ static void VS_CC BM3DCreate(
         d->block_step[i] = block_step;
     }
 
-    for (unsigned i = 0; i < std::extent_v<decltype(d->bm_range)>; ++i) {
+    for (int i = 0; i < std::ssize(d->bm_range); ++i) {
         int bm_range = int64ToIntS(
             vsapi->propGetInt(in, "bm_range", i, &error));
 
@@ -501,7 +499,7 @@ static void VS_CC BM3DCreate(
     }
     d->radius = radius;
 
-    for (unsigned i = 0; i < std::extent_v<decltype(d->ps_num)>; ++i) {
+    for (int i = 0; i < std::ssize(d->ps_num); ++i) {
         int ps_num = int64ToIntS(
             vsapi->propGetInt(in, "ps_num", i, &error));
 
@@ -514,7 +512,7 @@ static void VS_CC BM3DCreate(
         d->ps_num[i] = ps_num;
     }
 
-    for (unsigned i = 0; i < std::extent_v<decltype(d->ps_range)>; ++i) {
+    for (int i = 0; i < std::ssize(d->ps_range); ++i) {
         int ps_range = int64ToIntS(
             vsapi->propGetInt(in, "ps_range", i, &error));
 
