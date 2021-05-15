@@ -23,8 +23,8 @@
 #include <limits>
 #include <memory>
 #include <string>
-#include <vector>
 #include <thread>
+#include <vector>
 
 #include "cuda_runtime.h"
 
@@ -131,7 +131,7 @@ struct BM3DData {
     int device_id;
 
     ticket_semaphore semaphore;
-    std::vector<std::unique_ptr<std::atomic_flag>> locks;
+    std::unique_ptr<std::atomic_flag[]> locks;
     std::vector<CUDA_Resource> resources;
 };
 
@@ -175,7 +175,8 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
     int n, int activationReason, void **instanceData, void **frameData, 
     VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi
 ) {
-    using freeFrame_t = typename decltype(vsapi->freeFrame);
+
+    using freeFrame_t = decltype(vsapi->freeFrame);
 
     auto d = static_cast<BM3DData *>(*instanceData);
 
@@ -254,7 +255,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             d->semaphore.acquire();
 
             for (int i = 0; i < d->num_copy_engines; ++i) {
-                if (!(*d->locks[i]).test_and_set(std::memory_order::acquire)) {
+                if (!d->locks[i].test_and_set(std::memory_order::acquire)) {
                     lock_idx = i;
                     break;
                 }
@@ -396,7 +397,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
 
 FINALIZE:
         if (d->num_copy_engines > 1) {
-            (*d->locks[lock_idx]).clear(std::memory_order::release);
+            d->locks[lock_idx].clear(std::memory_order::release);
             d->semaphore.release();
         }
 
@@ -587,11 +588,8 @@ static void VS_CC BM3DCreate(
     // GPU resource allocation
     {
         d->semaphore.current.store(num_copy_engines - 1, std::memory_order::relaxed);
-        
-        d->locks.reserve(num_copy_engines);
-        for (int i = 0; i < num_copy_engines; ++i) {
-            d->locks.emplace_back(std::make_unique<std::atomic_flag>());
-        }
+
+        d->locks = std::move(std::make_unique<std::atomic_flag[]>(num_copy_engines));
 
         d->resources.reserve(num_copy_engines);
 
@@ -615,7 +613,6 @@ static void VS_CC BM3DCreate(
                     (final_ ? 2 : 1) * num_planes * temporal_width * max_height));
                 d->d_pitch = static_cast<int>(d_pitch);
             } else {
-                float * d_src;
                 checkError(cudaMalloc(&d_src, 
                     (final_ ? 2 : 1) * num_planes * temporal_width * max_height * d_pitch));
             }
@@ -632,7 +629,7 @@ static void VS_CC BM3DCreate(
             cudaStream_t stream;
             checkError(cudaStreamCreateWithFlags(&stream, 
                 cudaStreamNonBlocking));
-            
+
             d->resources.emplace_back(d_src, d_res, h_res, stream);
         }
     }
