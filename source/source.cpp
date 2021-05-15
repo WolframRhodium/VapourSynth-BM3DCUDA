@@ -79,6 +79,10 @@ struct Resource {
 
     constexpr Resource(T x) : data(x) {}
 
+    Resource(Resource<T, deleter> && other) : data(other.data) {
+        other.data = nullptr;
+    }
+
     constexpr operator T() {
         return data;
     }
@@ -106,9 +110,6 @@ struct CUDA_Resource {
     Resource<float *, cudaFreeHost> h_res;
     Resource<cudaStream_t, cudaStreamDestroy> stream;
     Resource<cudaGraphExec_t, cudaGraphExecDestroy> graphexecs[3];
-
-    CUDA_Resource(float * d_src, float * d_res, float * h_res, cudaStream_t stream) :
-        d_src(d_src), d_res(d_res), h_res(h_res), stream(stream), graphexecs() {}
 };
 
 struct BM3DData {
@@ -606,31 +607,39 @@ static void VS_CC BM3DCreate(
         int temporal_width = 2 * radius + 1;
         size_t d_pitch;
         for (int i = 0; i < num_copy_engines; ++i) {
-            float * d_src;
+            float * d_src_;
             if (i == 0) {
                 checkError(cudaMallocPitch(
-                    &d_src, &d_pitch, max_width * sizeof(float), 
+                    &d_src_, &d_pitch, max_width * sizeof(float), 
                     (final_ ? 2 : 1) * num_planes * temporal_width * max_height));
                 d->d_pitch = static_cast<int>(d_pitch);
             } else {
-                checkError(cudaMalloc(&d_src, 
+                checkError(cudaMalloc(&d_src_, 
                     (final_ ? 2 : 1) * num_planes * temporal_width * max_height * d_pitch));
             }
+            Resource<float *, cudaFree> d_src { d_src_ };
 
-            float * d_res;
-            checkError(cudaMalloc(&d_res, 
+            float * d_res_;
+            checkError(cudaMalloc(&d_res_, 
                 num_planes * temporal_width * 2 * max_height * d_pitch));
+            Resource<float *, cudaFree> d_res { d_res_ };
 
-            float * h_res;
-            checkError(cudaHostAlloc(&h_res, 
+            float * h_res_;
+            checkError(cudaHostAlloc(&h_res_, 
                 num_planes * temporal_width * 2 * max_height * d_pitch, 
                 cudaHostAllocDefault));
+            Resource<float *, cudaFreeHost> h_res { h_res_ };
 
-            cudaStream_t stream;
-            checkError(cudaStreamCreateWithFlags(&stream, 
+            cudaStream_t stream_;
+            checkError(cudaStreamCreateWithFlags(&stream_, 
                 cudaStreamNonBlocking));
-
-            d->resources.emplace_back(d_src, d_res, h_res, stream);
+            Resource<cudaStream_t, cudaStreamDestroy> stream { stream_ };
+            
+            d->resources.emplace_back(
+                std::move(d_src), 
+                std::move(d_res), 
+                std::move(h_res), 
+                std::move(stream));
         }
     }
 
