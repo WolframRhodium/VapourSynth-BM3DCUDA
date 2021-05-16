@@ -75,13 +75,22 @@ template <typename T, auto deleter>
 struct Resource {
     T data;
 
-    constexpr Resource() : data() {}
+    constexpr Resource() = default;
 
-    constexpr Resource(T x) : data(x) {}
+    constexpr Resource(Resource&& other) noexcept 
+            : data(std::exchange(other.data, nullptr)) 
+    { }
 
-    Resource(Resource<T, deleter> && other) : data(other.data) {
-        other.data = nullptr;
+    constexpr Resource& operator=(Resource&& other) noexcept {
+        if (this == &other) return *this;
+        deleter_(data);
+        data = std::exchange(other.data, nullptr);
+        return *this;
     }
+
+    Resource operator=(Resource other) = delete;
+
+    Resource(const Resource& other) = delete;
 
     constexpr operator T() {
         return data;
@@ -93,11 +102,13 @@ struct Resource {
         }
     }
 
-    constexpr Resource & operator = (T x) {
+    constexpr Resource& operator=(T x) {
         deleter_(data);
         data = x;
         return *this;
     }
+
+    constexpr Resource(T x) : data(x) {}
 
     constexpr ~Resource() {
         deleter_(data);
@@ -117,12 +128,14 @@ struct BM3DData {
     VSNodeRef * ref_node;
     const VSVideoInfo * vi;
 
-    float sigma[3];
-    int block_step[3];
-    int bm_range[3];
+    // stored in graphexec: 
+    // float sigma[3];
+    // int block_step[3];
+    // int bm_range[3];
+    // int ps_num[3];
+    // int ps_range[3];
+
     int radius;
-    int ps_num[3];
-    int ps_range[3];
     int num_copy_engines; // fast
     bool chroma;
     bool process[3]; // sigma != 0
@@ -215,20 +228,23 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
                 srcs.emplace_back(
                     vsapi->getFrameFilter(clamped_n, d->ref_node, frameCtx), 
-                    vsapi->freeFrame);
+                    vsapi->freeFrame
+                );
             }
             for (int i = -radius; i <= radius; ++i) {
                 int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
                 srcs.emplace_back(
                     vsapi->getFrameFilter(clamped_n, d->node, frameCtx), 
-                    vsapi->freeFrame);
+                    vsapi->freeFrame
+                );
             }
         } else {
             for (int i = -radius; i <= radius; ++i) {
                 int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
                 srcs.emplace_back(
                     vsapi->getFrameFilter(clamped_n, d->node, frameCtx), 
-                    vsapi->freeFrame);
+                    vsapi->freeFrame
+                );
             }
         }
 
@@ -248,7 +264,8 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             const int pl[] = { 0, 1, 2 };
 
             dst.reset(vsapi->newVideoFrame2(
-                d->vi->format, d->vi->width, d->vi->height, fr, pl, src, core));
+                d->vi->format, d->vi->width, d->vi->height, fr, pl, src, core)
+            );
         }
 
         int lock_idx = 0;
@@ -277,21 +294,6 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             int s_stride = s_pitch / sizeof(float);
             int width_bytes = width * sizeof(float);
 
-            if (!d->resources[lock_idx].graphexecs[0]) {
-                float sigma = d->sigma[0];
-                int block_step = d->block_step[0];
-                int bm_range = d->bm_range[0];
-                int ps_num = d->ps_num[0];
-                int ps_range = d->ps_range[0];
-
-                d->resources[lock_idx].graphexecs[0] = get_graphexec(
-                    d_res, d_src, h_res, 
-                    width, height, d_stride, 
-                    sigma, block_step, bm_range, 
-                    radius, ps_num, ps_range, 
-                    true, d->sigma[1], d->sigma[2], 
-                    final_);
-            }
             cudaGraphExec_t graphexec = d->resources[lock_idx].graphexecs[0];
 
             float * h_src = h_res;
@@ -302,7 +304,8 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                             vs_bitblt(
                                 h_src, d_pitch, 
                                 vsapi->getReadPtr(srcs[j + outer * temporal_width].get(), i), s_pitch, 
-                                width_bytes, height);
+                                width_bytes, height
+                            );
                         }
                         h_src += d_stride * height;
                     }
@@ -325,12 +328,15 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                     float * dstp = reinterpret_cast<float *>(vsapi->getWritePtr(dst.get(), plane));
 
                     if (radius) {
-                        vs_bitblt(dstp, s_pitch, h_res, d_pitch, 
-                            width_bytes, height * 2 * temporal_width);
+                        vs_bitblt(
+                            dstp, s_pitch, h_res, d_pitch, 
+                            width_bytes, height * 2 * temporal_width
+                        );
                     } else {
                         Aggregation(
                             dstp, h_res, 
-                            width, height, s_stride, d_stride);
+                            width, height, s_stride, d_stride
+                        );
                     }
                 }
 
@@ -345,21 +351,6 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                     int s_stride = s_pitch / sizeof(float);
                     int width_bytes = width * sizeof(float);
 
-                    if (!d->resources[lock_idx].graphexecs[plane]) {
-                        float sigma = d->sigma[plane];
-                        int block_step = d->block_step[plane];
-                        int bm_range = d->bm_range[plane];
-                        int ps_num = d->ps_num[plane];
-                        int ps_range = d->ps_range[plane];
-
-                        d->resources[lock_idx].graphexecs[plane] = get_graphexec(
-                            d_res, d_src, h_res, 
-                            width, height, d_stride, 
-                            sigma, block_step, bm_range, 
-                            radius, ps_num, ps_range, 
-                            false, 0.0f, 0.0f, 
-                            final_);
-                    }
                     cudaGraphExec_t graphexec = d->resources[lock_idx].graphexecs[plane];
 
                     float * h_src = h_res;
@@ -367,7 +358,8 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         vs_bitblt(
                             h_src, d_pitch, 
                             vsapi->getReadPtr(srcs[i].get(), plane), s_pitch, 
-                            width_bytes, height);
+                            width_bytes, height
+                        );
                         h_src += d_stride * height;
                     }
 
@@ -385,12 +377,15 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                     float * dstp = reinterpret_cast<float *>(vsapi->getWritePtr(dst.get(), plane));
 
                     if (radius) {
-                        vs_bitblt(dstp, s_pitch, h_res, d_pitch, 
-                            width_bytes, height * 2 * temporal_width);
+                        vs_bitblt(
+                            dstp, s_pitch, h_res, d_pitch, 
+                            width_bytes, height * 2 * temporal_width
+                        );
                     } else {
                         Aggregation(
                             dstp, h_res, 
-                            width, height, s_stride, d_stride);
+                            width, height, s_stride, d_stride
+                        );
                     }
                 }
             }
@@ -475,52 +470,49 @@ static void VS_CC BM3DCreate(
     }
     d->final_ = final_;
 
-    for (int i = 0; i < std::ssize(d->sigma); ++i) {
-        float sigma = static_cast<float>(
+    float sigma[3];
+    for (int i = 0; i < std::ssize(sigma); ++i) {
+        sigma[i] = static_cast<float>(
             vsapi->propGetFloat(in, "sigma", i, &error));
 
         if (error) {
-            sigma = (i == 0) ? 3.0f : d->sigma[i - 1];
-        } else if (sigma < 0.0f) {
+            sigma[i] = (i == 0) ? 3.0f : sigma[i - 1];
+        } else if (sigma[i] < 0.0f) {
             return set_error("\"sigma\" must be non-negative");
         }
 
-        if (sigma < std::numeric_limits<float>::epsilon()) {
+        if (sigma[i] < std::numeric_limits<float>::epsilon()) {
             d->process[i] = false;
         } else {
             d->process[i] = true;
 
             // assumes grayscale input, hard_thr = 2.7
-            sigma *= (3.0f / 4.0f) / 255.0f * 64.0f * (final_ ? 1.0f : 2.7f);
+            sigma[i] *= (3.0f / 4.0f) / 255.0f * 64.0f * (final_ ? 1.0f : 2.7f);
         }
-
-        d->sigma[i] = sigma;
     }
 
-    for (int i = 0; i < std::ssize(d->block_step); ++i) {
-        int block_step = int64ToIntS(
+    int block_step[3];
+    for (int i = 0; i < std::ssize(block_step); ++i) {
+        block_step[i] = int64ToIntS(
             vsapi->propGetInt(in, "block_step", i, &error));
 
         if (error) {
-            block_step = (i == 0) ? 8 : d->block_step[i - 1];
-        } else if (block_step <= 0 || block_step > 8) {
+            block_step[i] = (i == 0) ? 8 : block_step[i - 1];
+        } else if (block_step[i] <= 0 || block_step[i] > 8) {
             return set_error("\"block_step\" must be in range [1, 8]");
         }
-
-        d->block_step[i] = block_step;
     }
 
-    for (int i = 0; i < std::ssize(d->bm_range); ++i) {
-        int bm_range = int64ToIntS(
+    int bm_range[3];
+    for (int i = 0; i < std::ssize(bm_range); ++i) {
+        bm_range[i] = int64ToIntS(
             vsapi->propGetInt(in, "bm_range", i, &error));
 
         if (error) {
-            bm_range = (i == 0) ? 9 : d->bm_range[i - 1];
-        } else if (bm_range <= 0) {
+            bm_range[i] = (i == 0) ? 9 : bm_range[i - 1];
+        } else if (bm_range[i] <= 0) {
             return set_error("\"bm_range\" must be positive");
         }
-
-        d->bm_range[i] = bm_range;
     }
 
     int radius = int64ToIntS(vsapi->propGetInt(in, "radius", 0, &error));
@@ -531,30 +523,28 @@ static void VS_CC BM3DCreate(
     }
     d->radius = radius;
 
-    for (int i = 0; i < std::ssize(d->ps_num); ++i) {
-        int ps_num = int64ToIntS(
+    int ps_num[3];
+    for (int i = 0; i < std::ssize(ps_num); ++i) {
+        ps_num[i] = int64ToIntS(
             vsapi->propGetInt(in, "ps_num", i, &error));
 
         if (error) {
-            ps_num = (i == 0) ? 2 : d->ps_num[i - 1];
-        } else if (ps_num <= 0 || ps_num > 8) {
+            ps_num[i] = (i == 0) ? 2 : ps_num[i - 1];
+        } else if (ps_num[i] <= 0 || ps_num[i] > 8) {
             return set_error("\"ps_num\" must be in range [1, 8]");
         }
-
-        d->ps_num[i] = ps_num;
     }
 
-    for (int i = 0; i < std::ssize(d->ps_range); ++i) {
-        int ps_range = int64ToIntS(
+    int ps_range[3];
+    for (int i = 0; i < std::ssize(ps_range); ++i) {
+        ps_range[i] = int64ToIntS(
             vsapi->propGetInt(in, "ps_range", i, &error));
 
         if (error) {
-            ps_range = (i == 0) ? 4 : d->ps_range[i - 1];
-        } else if (ps_range <= 0) {
+            ps_range[i] = (i == 0) ? 4 : ps_range[i - 1];
+        } else if (ps_range[i] <= 0) {
             return set_error("\"ps_range\" must be positive");
         }
-
-        d->ps_range[i] = ps_range;
     }
 
     bool chroma = !!vsapi->propGetInt(in, "chroma", 0, &error);
@@ -590,7 +580,7 @@ static void VS_CC BM3DCreate(
     {
         d->semaphore.current.store(num_copy_engines - 1, std::memory_order::relaxed);
 
-        d->locks = std::move(std::make_unique<std::atomic_flag[]>(num_copy_engines));
+        d->locks = std::make_unique<std::atomic_flag[]>(num_copy_engines);
 
         d->resources.reserve(num_copy_engines);
 
@@ -606,16 +596,20 @@ static void VS_CC BM3DCreate(
         int num_planes { chroma ? 3 : 1 };
         int temporal_width = 2 * radius + 1;
         size_t d_pitch;
+        int d_stride;
         for (int i = 0; i < num_copy_engines; ++i) {
             float * d_src_;
             if (i == 0) {
                 checkError(cudaMallocPitch(
                     &d_src_, &d_pitch, max_width * sizeof(float), 
-                    (final_ ? 2 : 1) * num_planes * temporal_width * max_height));
+                    (final_ ? 2 : 1) * num_planes * temporal_width * max_height)
+                );
+                d_stride = static_cast<int>(d_pitch / sizeof(float));
                 d->d_pitch = static_cast<int>(d_pitch);
             } else {
                 checkError(cudaMalloc(&d_src_, 
-                    (final_ ? 2 : 1) * num_planes * temporal_width * max_height * d_pitch));
+                    (final_ ? 2 : 1) * num_planes * temporal_width * max_height * d_pitch)
+                );
             }
             Resource<float *, cudaFree> d_src { d_src_ };
 
@@ -634,12 +628,45 @@ static void VS_CC BM3DCreate(
             checkError(cudaStreamCreateWithFlags(&stream_, 
                 cudaStreamNonBlocking));
             Resource<cudaStream_t, cudaStreamDestroy> stream { stream_ };
-            
-            d->resources.emplace_back(
+
+            cudaGraphExec_t graphexecs[3] {};
+            if (d->chroma) {
+                graphexecs[0] = get_graphexec(
+                    d_res, d_src, h_res, 
+                    width, height, d_stride, 
+                    sigma[0], block_step[0], bm_range[0], 
+                    radius, ps_num[0], ps_range[0], 
+                    true, sigma[1], sigma[2], 
+                    final_
+                );
+            } else {
+                auto subsamplingW = d->vi->format->subSamplingW;
+                auto subsamplingH = d->vi->format->subSamplingH;
+
+                for (int i = 0; i < 3; ++i) {
+                    if (d->process[i]) {
+                        int plane_width { i == 0 ? width : width >> subsamplingW };
+                        int plane_height { i == 0 ? height : height >> subsamplingH };
+
+                        graphexecs[i] = get_graphexec(
+                            d_res, d_src, h_res, 
+                            plane_width, plane_height, d_stride, 
+                            sigma[i], block_step[i], bm_range[i], 
+                            radius, ps_num[i], ps_range[i], 
+                            false, 0.0f, 0.0f, 
+                            final_
+                        );
+                    }
+                }
+            }
+
+            d->resources.push_back(CUDA_Resource{
                 std::move(d_src), 
                 std::move(d_res), 
                 std::move(h_res), 
-                std::move(stream));
+                std::move(stream), 
+                { graphexecs[0], graphexecs[1], graphexecs[2] }
+            });
         }
     }
 
