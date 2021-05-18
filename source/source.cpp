@@ -602,14 +602,12 @@ static void VS_CC BM3DCreate(
             if (i == 0) {
                 checkError(cudaMallocPitch(
                     &d_src_, &d_pitch, max_width * sizeof(float), 
-                    (final_ ? 2 : 1) * num_planes * temporal_width * max_height)
-                );
+                    (final_ ? 2 : 1) * num_planes * temporal_width * max_height));
                 d_stride = static_cast<int>(d_pitch / sizeof(float));
                 d->d_pitch = static_cast<int>(d_pitch);
             } else {
                 checkError(cudaMalloc(&d_src_, 
-                    (final_ ? 2 : 1) * num_planes * temporal_width * max_height * d_pitch)
-                );
+                    (final_ ? 2 : 1) * num_planes * temporal_width * max_height * d_pitch));
             }
             Resource<float *, cudaFree> d_src { d_src_ };
 
@@ -673,7 +671,8 @@ static void VS_CC BM3DCreate(
     vsapi->createFilter(
         in, out, "BM3D", 
         BM3DInit, BM3DGetFrame, BM3DFree, 
-        fast ? fmParallel : fmParallelRequests, 0, d.release(), core);
+        fast ? fmParallel : fmParallelRequests, 0, d.release(), core
+    );
 }
 
 VS_EXTERNAL_API(void) VapourSynthPluginInit(
@@ -682,7 +681,8 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
 
     configFunc(
         "com.WolframRhodium.BM3DCUDA", "bm3dcuda", "BM3D algorithm implemented in CUDA", 
-        VAPOURSYNTH_API_VERSION, 1, plugin);
+        VAPOURSYNTH_API_VERSION, 1, plugin
+    );
 
     registerFunc("BM3D",
         "clip:clip;"
@@ -696,5 +696,6 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
         "chroma:int:opt;"
         "device_id:int:opt;"
         "fast:int:opt;",
-        BM3DCreate, nullptr, plugin);
+        BM3DCreate, nullptr, plugin
+    );
 }

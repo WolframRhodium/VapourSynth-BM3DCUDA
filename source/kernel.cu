@@ -51,13 +51,17 @@ cudaGraphExec_t get_graphexec(
     bool chroma, float sigma_u, float sigma_v, 
     bool final_);
 
+constexpr int smem_stride = 32 + 1;
+
 // modified from fftw-3.3.9 generated code:
 // fftw-3.3.9/rdft/scalar/r2r/e10_8.c
 // 1/2-D DCT-II (8 points)
 // launched by blockDim(x=32, y=1, z=1)
 template <int dim=1, int stride=256, int howmany=8, int howmany_stride=32>
 __device__
-static inline void dct_pack8_interleave4(float * data) {
+static inline void dct_pack8_interleave4(
+    float * __restrict__ data, float * __restrict__ buffer
+) {
     static_assert(1 <= dim && dim <= 2, "Invalid dim");
 
     float KP414213562 {+0.414213562373095048801688724209698078569671875};
@@ -122,25 +126,16 @@ static inline void dct_pack8_interleave4(float * data) {
                 int lane_id;
                 asm("mov.u32 %0, %%laneid;" : "=r"(lane_id));
 
-                auto active_mask = 0xFFFFFFFF;
+                #pragma unroll
+                for (int i = 0; i < 8; ++i) {
+                    buffer[i * smem_stride + lane_id] = v[i];
+                }
+
+                __syncwarp();
 
                 #pragma unroll
-                for (int i = 1; i <= 4; i *= 2) {
-                    float temp[8];
-
-                    #pragma unroll
-                    for (int j = 0; j < 8; ++j) {
-                        temp[j] = __shfl_xor_sync(active_mask, v[j], i, 8);
-                    }
-
-                    #pragma unroll
-                    for (int j = 0; j < 4; ++j) {
-                        if (lane_id & i) {
-                            v[j + i * (j / i)] = temp[j + i * (j / i) + i];
-                        } else {
-                            v[j + i * (j / i) + i] = temp[j + i * (j / i)];
-                        }
-                    }
+                for (int i = 0; i < 8; ++i) {
+                    v[i] = buffer[lane_id % 8 * smem_stride + (lane_id & -8) + i];
                 }
             }
         }
@@ -158,7 +153,9 @@ static inline void dct_pack8_interleave4(float * data) {
 // launched by blockDim(x=32, y=1, z=1)
 template <int dim=1, int stride=256, int howmany=8, int howmany_stride=32>
 __device__
-static inline void idct_pack8_interleave4(float * data) {
+static inline void idct_pack8_interleave4(
+    float * __restrict__ data, float * __restrict__ buffer
+) {
     static_assert(1 <= dim && dim <= 2, "Invalid dim");
 
     float KP1_662939224 {+1.662939224605090474157576755235811513477121624};
@@ -222,25 +219,16 @@ static inline void idct_pack8_interleave4(float * data) {
                 int lane_id;
                 asm("mov.u32 %0, %%laneid;" : "=r"(lane_id));
 
-                auto active_mask = 0xFFFFFFFF;
+                #pragma unroll
+                for (int i = 0; i < 8; ++i) {
+                    buffer[i * smem_stride + lane_id] = v[i];
+                }
+
+                __syncwarp();
 
                 #pragma unroll
-                for (int i = 1; i <= 4; i *= 2) {
-                    float temp[8];
-
-                    #pragma unroll
-                    for (int j = 0; j < 8; ++j) {
-                        temp[j] = __shfl_xor_sync(active_mask, v[j], i, 8);
-                    }
-
-                    #pragma unroll
-                    for (int j = 0; j < 4; ++j) {
-                        if (lane_id & i) {
-                            v[j + i * (j / i)] = temp[j + i * (j / i) + i];
-                        } else {
-                            v[j + i * (j / i) + i] = temp[j + i * (j / i)];
-                        }
-                    }
+                for (int i = 0; i < 8; ++i) {
+                    v[i] = buffer[lane_id % 8 * smem_stride + (lane_id & -8) + i];
                 }
             }
         }
@@ -305,17 +293,19 @@ static inline float hard_thresholding(float * data, float sigma) {
 // hard thresholding
 // launched by blockDim(x=32, y=1, z=1)
 __device__
-static inline float collaborative_dct(float * denoising_patch, float sigma) {
+static inline float collaborative_dct(
+    float * __restrict__ denoising_patch, float sigma, float * __restrict__ buffer
+) {
     constexpr int stride1 = 1;
     constexpr int stride2 = stride1 * 8;
     
-    dct_pack8_interleave4<2, stride1, 8, stride2>(denoising_patch);
-    dct_pack8_interleave4<1, stride2, 8, stride1>(denoising_patch);
+    dct_pack8_interleave4<2, stride1, 8, stride2>(denoising_patch, buffer);
+    dct_pack8_interleave4<1, stride2, 8, stride1>(denoising_patch, buffer);
 
     float adaptive_weight = hard_thresholding<stride1>(denoising_patch, sigma);
 
-    idct_pack8_interleave4<2, stride1, 8, stride2>(denoising_patch);
-    idct_pack8_interleave4<1, stride2, 8, stride1>(denoising_patch);
+    idct_pack8_interleave4<2, stride1, 8, stride2>(denoising_patch, buffer);
+    idct_pack8_interleave4<1, stride2, 8, stride1>(denoising_patch, buffer);
 
     return adaptive_weight;
 }
@@ -370,20 +360,22 @@ static inline float soft_thresholding(
 // launched by blockDim(x=32, y=1, z=1)
 __device__
 static inline float collaborative_dct(
-    float * denoising_patch, float * ref_patch, float sigma) {
+    float * __restrict__ denoising_patch, float * __restrict__ ref_patch, 
+    float sigma, float * __restrict__ buffer
+) {
     constexpr int stride1 = 1;
     constexpr int stride2 = stride1 * 8;
     
-    dct_pack8_interleave4<2, stride1, 8, stride2>(denoising_patch);
-    dct_pack8_interleave4<1, stride2, 8, stride1>(denoising_patch);
+    dct_pack8_interleave4<2, stride1, 8, stride2>(denoising_patch, buffer);
+    dct_pack8_interleave4<1, stride2, 8, stride1>(denoising_patch, buffer);
 
-    dct_pack8_interleave4<2, stride1, 8, stride2>(ref_patch);
-    dct_pack8_interleave4<1, stride2, 8, stride1>(ref_patch);
+    dct_pack8_interleave4<2, stride1, 8, stride2>(ref_patch, buffer);
+    dct_pack8_interleave4<1, stride2, 8, stride1>(ref_patch, buffer);
 
     float adaptive_weight = soft_thresholding<stride1>(denoising_patch, ref_patch, sigma);
 
-    idct_pack8_interleave4<2, stride1, 8, stride2>(denoising_patch);
-    idct_pack8_interleave4<1, stride2, 8, stride1>(denoising_patch);
+    idct_pack8_interleave4<2, stride1, 8, stride2>(denoising_patch, buffer);
+    idct_pack8_interleave4<1, stride2, 8, stride1>(denoising_patch, buffer);
 
     return adaptive_weight;
 }
@@ -406,6 +398,8 @@ static void bm3d(
     int _radius, int ps_num, int ps_range, 
     [[maybe_unused]] float sigma_u, [[maybe_unused]] float sigma_v
 ) {
+
+    __shared__ float buffer[8 * smem_stride];
 
     int lane_id;
     asm("mov.u32 %0, %%laneid;" : "=r"(lane_id));
@@ -701,7 +695,7 @@ static void bm3d(
                 }
             }
 
-            ada_weight = collaborative_dct(denoising_patch, ref_patch, sigma);
+            ada_weight = collaborative_dct(denoising_patch, ref_patch, sigma, buffer);
         } else {
             #pragma unroll
             for (int i = 0; i < 8; ++i) {
@@ -721,7 +715,7 @@ static void bm3d(
                 }
             }
 
-            ada_weight = collaborative_dct(denoising_patch, sigma);
+            ada_weight = collaborative_dct(denoising_patch, sigma, buffer);
         }
 
         float * const wdstpc = &res[sub_lane_id];
@@ -814,12 +808,6 @@ cudaGraphExec_t get_graphexec(
                              : (final_ ? bm3d<true, false, true> : bm3d<true, false, false>))
                    : (chroma ? (final_ ? bm3d<false, true, true> : bm3d<false, true, false>) 
                              : (final_ ? bm3d<false, false, true> : bm3d<false, false, false>))
-        );
-
-        cudaFuncSetAttribute(
-            kernel_params.func, 
-            cudaFuncAttributePreferredSharedMemoryCarveout, 
-            cudaSharedmemCarveoutMaxL1
         );
 
         kernel_params.gridDim = dim3(
