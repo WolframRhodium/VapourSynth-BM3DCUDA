@@ -18,10 +18,12 @@ Please check [VapourSynth-BM3D](https://github.com/HomeOfVapourSynthEvolution/Va
 
 The minimum requirement on compute capability is 3.0, which requires manual compilation (specifying nvcc flag `-gencode arch=compute_30,code=sm_30`).
 
+The `_rtc` version compiles code at runtime. It requires GPU driver 465 or newer and has a dependency on `nvrtc64_112_0.dll/libnvrtc.so.11.2`.
+
 ## Parameters
 
 ```python3
-bm3dcuda.BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_step=8, int[] bm_range=9, int radius=0, int[] ps_num=2, int[] ps_range=4, bint chroma=False, int device_id=0, bool fast=True])
+bm3dcuda[_rtc].BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_step=8, int[] bm_range=9, int radius=0, int[] ps_num=2, int[] ps_range=4, bint chroma=False, int device_id=0, bool fast=True])
 ```
 
 - clip:<br />
@@ -65,6 +67,7 @@ GPU memory consumptions:<br />
 
 ## Compilation on Linux
 
+### Standard version
 - g++ 11 (or higher) is required to compile `source.cpp`, while nvcc 11.3 only supports g++ 10 or older.
 
 - Unused nvcc flags may be removed. [Documentation for -gencode](https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/index.html#options-for-steering-gpu-code-generation-generate-code)
@@ -72,7 +75,13 @@ GPU memory consumptions:<br />
 ```
 cd source
 
-nvcc kernel.cu -c --use_fast_math --std=c++17 -gencode arch=compute_50,code=\"sm_50,compute_50\" -gencode arch=compute_52,code=sm_52 -gencode arch=compute_61,code=sm_61 -gencode arch=compute_75,code=sm_75 -gencode arch=compute_86,code=\"sm_86,compute_86\" -t 0 --compiler-bindir g++-10 -o kernel.o
+nvcc kernel.cu -o kernel.o -c --use_fast_math --std=c++17 -gencode arch=compute_50,code=\"sm_50,compute_50\" -gencode arch=compute_52,code=sm_52 -gencode arch=compute_61,code=sm_61 -gencode arch=compute_75,code=sm_75 -gencode arch=compute_86,code=\"sm_86,compute_86\" -t 0 --compiler-bindir g++-10
 
-g++-11 source.cpp kernel.o -shared -fPIC -I/usr/local/cuda-11.3/include -I/usr/local/include -L/usr/local/cuda-11.3/lib64 -lcudart_static --std=c++20 -march=native -O3 -o libbm3dcuda.so
+g++-11 source.cpp kernel.o -o libbm3dcuda.so -shared -fPIC -I/usr/local/cuda-11.3/include -I/usr/local/include -L/usr/local/cuda-11.3/lib64 -lcudart_static --std=c++20 -march=native -O3
+```
+
+### RTC version
+```
+cd rtc_source
+g++-11 Source.cpp -o libbm3drtc.so -shared -fPIC -I /usr/local/cuda-11.3/include -I /usr/local/include -L /usr/local/cuda-11.3/lib64 -lnvrtc -lcuda -Wl,-rpath,/usr/local/cuda-11.3/lib64 --std=c++20 -march=native -O3
 ```
