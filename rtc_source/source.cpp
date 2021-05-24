@@ -37,15 +37,48 @@
 
 #include "kernel.hpp"
 
+#ifdef _WIN64
+#include "windows.h"
+#endif
+
+#ifdef _MSC_VER
+#if defined (_WINDEF_) && defined(min) && defined(max)
+#undef min
+#undef max
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
+
 using namespace std::string_literals;
 
-#define checkError(expr) do {                                                               \
-    CUresult __err = expr;                                                                  \
-    if (__err != CUDA_SUCCESS) {                                                            \
-        const char * error_str;                                                             \
-        cuGetErrorString(__err, &error_str);                                                \
-        return set_error("'"s + # expr + "' failed: " + error_str);                         \
-    }                                                                                       \
+#define checkError(expr) do {                                                        \
+    CUresult __err = expr;                                                           \
+    if (__err != CUDA_SUCCESS) {                                                     \
+        const char * error_str;                                                      \
+        cuGetErrorString(__err, &error_str);                                         \
+        return set_error("'"s + # expr + "' failed: " + error_str);                  \
+    }                                                                                \
+} while(0)
+
+#define checkNVRTCError(expr) do {                                                   \
+    nvrtcResult __err = expr;                                                        \
+    if (__err != NVRTC_SUCCESS) {                                                    \
+        return set_error("'"s + # expr + "' failed: " + nvrtcGetErrorString(__err)); \
+    }                                                                                \
+} while(0)
+
+#define checkFilterError(expr) do {                                                  \
+    CUresult __err = expr;                                                           \
+    if (__err != CUDA_SUCCESS) {                                                     \
+        const char * error_str;                                                      \
+        cuGetErrorString(__err, &error_str);                                         \
+        const std::string error = "BM3D_RTC: '"s + # expr + "' faild: " + error_str; \
+        vsapi->setFilterError(error.c_str(), frameCtx);                              \
+        dst = nullptr;                                                               \
+        goto FINALIZE;                                                               \
+    }                                                                                \
 } while(0)
 
 constexpr int kFast = 4;
@@ -78,13 +111,13 @@ struct Resource {
     constexpr Resource() = default;
 
     constexpr Resource(Resource&& other) noexcept 
-            : data(std::exchange(other.data, T())) 
+            : data(std::exchange(other.data, T{})) 
     { }
 
     constexpr Resource& operator=(Resource&& other) noexcept {
         if (this == &other) return *this;
         deleter_(data);
-        data = std::exchange(other.data, T());
+        data = std::exchange(other.data, T{});
         return *this;
     }
 
@@ -142,7 +175,6 @@ struct BM3DData {
     bool final_;
 
     int d_pitch;
-    int device_id;
 
     Resource<CUdevice, cuDevicePrimaryCtxRelease> device;
     CUcontext context; // use primary context
@@ -152,14 +184,17 @@ struct BM3DData {
     std::vector<CUDA_Resource> resources;
 };
 
-CUmodule compile(
+std::string compile(
+    CUmodule * module_, 
     int width, int height, int stride, 
     float sigma, int block_step, int bm_range, 
     int radius, int ps_num, int ps_range, 
     bool chroma, float sigma_u, float sigma_v, 
     bool final_, CUdevice device
 ) {
-    auto check = [](nvrtcResult res) {
+
+    auto set_error = [](auto error_message) {
+        return error_message;
     };
 
     nvrtcProgram program;
@@ -168,42 +203,61 @@ CUmodule compile(
         << "__device__ static const int width = " << width << ";\n"
         << "__device__ static const int height = " << height << ";\n"
         << "__device__ static const int stride = " << stride << ";\n"
-        << "__device__ static const float sigma_y = " << std::hexfloat << sigma << ";\n"
+        << "__device__ static const float sigma_y = " 
+            << std::hexfloat << sigma << ";\n"
         << "__device__ static const int block_step = " << block_step << ";\n"
         << "__device__ static const int bm_range = " << bm_range << ";\n"
         << "__device__ static const int _radius = " << radius << ";\n"
         << "__device__ static const int ps_num = " << ps_num << ";\n"
         << "__device__ static const int ps_range = " << ps_range << ";\n"
-        << "__device__ static const float sigma_u = " << std::hexfloat << sigma_u << ";\n"
-        << "__device__ static const float sigma_v = " << std::hexfloat << sigma_v << ";\n"
+        << "__device__ static const float sigma_u = " 
+            << std::hexfloat << sigma_u << ";\n"
+        << "__device__ static const float sigma_v = " 
+            << std::hexfloat << sigma_v << ";\n"
         << "__device__ static const bool temporal = " << (radius > 0) << ";\n"
         << "__device__ static const bool chroma = " << chroma << ";\n"
         << "__device__ static const bool final_ = " << final_ << ";\n"
-        << "__device__ static const float FLT_MAX = " << std::hexfloat << FLT_MAX << ";\n"
-        << "__device__ static const float FLT_EPSILON = " << std::hexfloat << FLT_EPSILON << ";\n"
+        << "__device__ static const float FLT_MAX = " 
+            << std::hexfloat << FLT_MAX << ";\n"
+        << "__device__ static const float FLT_EPSILON = " 
+            << std::hexfloat << FLT_EPSILON << ";\n"
         << kernel_source_template;
     std::string kernel_source = kernel_source_io.str();
-    check(nvrtcCreateProgram(&program, kernel_source.c_str(), nullptr, 0, nullptr, nullptr));
+    checkNVRTCError(nvrtcCreateProgram(
+        &program, kernel_source.c_str(), nullptr, 0, nullptr, nullptr));
 
     int major;
-    cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device);
+    checkError(cuDeviceGetAttribute(
+        &major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device));
     int minor;
-    cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device);
+    checkError(cuDeviceGetAttribute(
+        &minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device));
     int compute_capability = major * 10 + minor;
-    auto arch = "-arch=compute_" + std::to_string(compute_capability);
-    const char * opts[] = {arch.c_str(), "-use_fast_math", "-std=c++17"};
-    check(nvrtcCompileProgram(program, std::ssize(opts), opts));
+
+    // find maximum supported architecture
+    int num_archs;
+    checkNVRTCError(nvrtcGetNumSupportedArchs(&num_archs));
+    const auto supported_archs = std::make_unique<int []>(num_archs);
+    checkNVRTCError(nvrtcGetSupportedArchs(supported_archs.get()));
+    std::string arch_str;
+    if (compute_capability > supported_archs[num_archs - 1]) {
+        arch_str = "-arch=compute_" + std::to_string(compute_capability);
+    } else {
+        arch_str = "-arch=sm_" + std::to_string(compute_capability);
+    }
+
+    const char * opts[] = { arch_str.c_str(), "-use_fast_math", "-std=c++17" };
+    checkNVRTCError(nvrtcCompileProgram(program, (int) std::ssize(opts), opts));
 
     size_t ptx_size;
-    check(nvrtcGetPTXSize(program, &ptx_size));
-    auto ptx_source = std::make_unique<char[]>(ptx_size);
-    check(nvrtcGetPTX(program, ptx_source.get()));
-    nvrtcDestroyProgram(&program);
+    checkNVRTCError(nvrtcGetPTXSize(program, &ptx_size));
+    const auto ptx_source = std::make_unique<char[]>(ptx_size);
+    checkNVRTCError(nvrtcGetPTX(program, ptx_source.get()));
+    checkNVRTCError(nvrtcDestroyProgram(&program));
 
-    CUmodule module;
-    cuModuleLoadDataEx(&module, ptx_source.get(), 0, nullptr, nullptr);
+    checkError(cuModuleLoadDataEx(module_, ptx_source.get(), 0, nullptr, nullptr));
 
-    return module;
+    return "";
 }
 
 CUgraphExec get_graphexec(
@@ -278,7 +332,8 @@ CUgraphExec get_graphexec(
             .kernelParams = kernel_args, 
         };
 
-        cuGraphAddKernelNode(&n_kernel, graph, dependencies, std::size(dependencies), &node_params);
+        cuGraphAddKernelNode(
+            &n_kernel, graph, dependencies, std::size(dependencies), &node_params);
     }
 
     CUgraphNode n_DtoH;
@@ -301,7 +356,8 @@ CUgraphExec get_graphexec(
             .Depth = 1, 
         };
 
-        cuGraphAddMemcpyNode(&n_DtoH, graph, dependencies, std::size(dependencies), &copy_params, context);
+        cuGraphAddMemcpyNode(
+            &n_DtoH, graph, dependencies, std::size(dependencies), &copy_params, context);
     }
 
     CUgraphExec graphexec;
@@ -440,7 +496,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
         int d_pitch = d->d_pitch;
         int d_stride = d_pitch / sizeof(float);
 
-        cuCtxPushCurrent(d->context);
+        checkFilterError(cuCtxPushCurrent(d->context));
 
         if (d->chroma) {
             int width = vsapi->getFrameWidth(src, 0);
@@ -456,9 +512,11 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 for (int i = 0; i < 3; ++i) {
                     for (int j = 0; j < temporal_width; ++j) {
                         if (i == 0 || d->process[i]) {
+                            auto current_src = srcs[j + outer * temporal_width].get();
+
                             vs_bitblt(
                                 h_src, d_pitch, 
-                                vsapi->getReadPtr(srcs[j + outer * temporal_width].get(), i), s_pitch, 
+                                vsapi->getReadPtr(current_src, i), s_pitch, 
                                 width_bytes, height
                             );
                         }
@@ -467,19 +525,14 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 }
             }
 
-            cuGraphLaunch(graphexec, stream);
+            checkFilterError(cuGraphLaunch(graphexec, stream));
 
-            if (auto error = cuStreamSynchronize(stream); error != CUDA_SUCCESS) {
-                const char * error_str;
-                cuGetErrorString(error, &error_str);
-                vsapi->setFilterError(("BM3D: "s + error_str).c_str(), frameCtx);
-                dst = nullptr;
-                goto FINALIZE;
-            }
+            checkFilterError(cuStreamSynchronize(stream));
 
             for (int plane = 0; plane < 3; ++plane) {
                 if (d->process[plane]) {
-                    float * dstp = reinterpret_cast<float *>(vsapi->getWritePtr(dst.get(), plane));
+                    float * dstp = reinterpret_cast<float *>(
+                        vsapi->getWritePtr(dst.get(), plane));
 
                     if (radius) {
                         vs_bitblt(
@@ -517,23 +570,12 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         h_src += d_stride * height;
                     }
 
-                    if (auto error = cuGraphLaunch(graphexec, stream); error != CUDA_SUCCESS) {
-                        const char * error_str;
-                        cuGetErrorString(error, &error_str);
-                        vsapi->setFilterError(("BM3D: "s + error_str).c_str(), frameCtx);
-                        dst = nullptr;
-                        goto FINALIZE;
-                    }
+                    checkFilterError(cuGraphLaunch(graphexec, stream));
 
-                    if (auto error = cuStreamSynchronize(stream); error != CUDA_SUCCESS) {
-                        const char * error_str;
-                        cuGetErrorString(error, &error_str);
-                        vsapi->setFilterError(("BM3D: "s + error_str).c_str(), frameCtx);
-                        dst = nullptr;
-                        goto FINALIZE;
-                    }
+                    checkFilterError(cuStreamSynchronize(stream));
 
-                    float * dstp = reinterpret_cast<float *>(vsapi->getWritePtr(dst.get(), plane));
+                    float * dstp = reinterpret_cast<float *>(
+                        vsapi->getWritePtr(dst.get(), plane));
 
                     if (radius) {
                         vs_bitblt(
@@ -550,7 +592,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             }
         }
 
-        cuCtxPopCurrent(nullptr);
+        checkFilterError(cuCtxPopCurrent(nullptr));
 
 FINALIZE:
         if (d->num_copy_engines > 1) {
@@ -582,8 +624,6 @@ static void VS_CC BM3DFree(
     vsapi->freeNode(d->node);
     vsapi->freeNode(d->ref_node);
 
-    //exit(1);
-
     delete d;
 }
 
@@ -595,7 +635,7 @@ static void VS_CC BM3DCreate(
     auto d { std::make_unique<BM3DData>() };
 
     auto set_error = [&](const std::string & error_message) {
-        vsapi->setError(out, ("BM3D: " + error_message).c_str());
+        vsapi->setError(out, ("BM3D_RTC: " + error_message).c_str());
         vsapi->freeNode(d->node);
         vsapi->freeNode(d->ref_node);
     };
@@ -731,7 +771,7 @@ static void VS_CC BM3DCreate(
 
     // GPU related
     {
-        cuInit(0);
+        checkError(cuInit(0));
 
         int device_id = int64ToIntS(vsapi->propGetInt(in, "device_id", 0, &error));
         if (error) {
@@ -745,12 +785,12 @@ static void VS_CC BM3DCreate(
         } else {
             return set_error("invalid device ID (" + std::to_string(device_id) + ")");
         }
-        d->device_id = device_id;
 
         CUcontext context;
         checkError(cuDevicePrimaryCtxRetain(&context, device_));
         Resource<CUdevice, cuDevicePrimaryCtxRelease> device { device_ };
-        cuCtxPushCurrent(context);
+        checkError(cuCtxPushCurrent(context));
+        d->context = context;
 
         d->resources.reserve(num_copy_engines);
 
@@ -765,6 +805,18 @@ static void VS_CC BM3DCreate(
 
         int num_planes { chroma ? 3 : 1 };
         int temporal_width = 2 * radius + 1;
+
+#ifdef _WIN64
+        const std::string plugin_path = 
+            vsapi->getPluginPath(vsapi->getPluginById("com.WolframRhodium.BM3DCUDA_RTC", core));
+        std::string folder_path = plugin_path.substr(0, plugin_path.find_last_of('/'));
+        int nvrtc_major, nvrtc_minor;
+        nvrtcVersion(&nvrtc_major, &nvrtc_minor);
+        int nvrtc_version = nvrtc_major * 10 + nvrtc_minor;
+        const std::string dll_path = 
+            folder_path + "/nvrtc-builtins64_" + std::to_string(nvrtc_version) + ".dll";
+        const Resource<HMODULE, FreeLibrary> dll_handle = LoadLibraryA(dll_path.c_str());
+#endif
 
         size_t d_pitch;
         int d_stride;
@@ -802,7 +854,9 @@ static void VS_CC BM3DCreate(
             CUgraphExec graphexecs[3] {};
             if (chroma) {
                 if (i == 0) {
-                    d->modules[0] = compile(
+                    CUmodule module_;
+
+                    auto error = compile(&module_, 
                         width, height, d_stride, 
                         sigma[0], block_step[0], bm_range[0], 
                         radius, ps_num[0], ps_range[0], 
@@ -810,7 +864,13 @@ static void VS_CC BM3DCreate(
                         final_, device
                     );
 
-                    cuModuleGetFunction(&functions[0], d->modules[0], "bm3d");
+                    if (error.empty()) {
+                        d->modules[0] = module_;
+                    } else {
+                        return set_error(error);
+                    }
+
+                    checkError(cuModuleGetFunction(&functions[0], d->modules[0], "bm3d"));
                 }
 
                 graphexecs[0] = get_graphexec(
@@ -829,15 +889,23 @@ static void VS_CC BM3DCreate(
                         int plane_height { plane == 0 ? height : height >> subsamplingH };
 
                         if (i == 0) {
-                            d->modules[plane] = compile(
+                            CUmodule module_;
+
+                            auto error = compile(&module_, 
                                 width, height, d_stride, 
                                 sigma[plane], block_step[plane], bm_range[plane], 
                                 radius, ps_num[plane], ps_range[plane], 
-                                false, 0.0f, 0.0f,  
-                                final_, device
+                                false, 0.0f, 0.0f, final_, device
                             );
 
-                            cuModuleGetFunction(&functions[plane], d->modules[plane], "bm3d");
+                            if (error.empty()) {
+                                d->modules[plane] = module_;
+                            } else {
+                                return set_error(error);
+                            }
+
+                            checkError(cuModuleGetFunction(
+                                &functions[plane], d->modules[plane], "bm3d"));
                         }
 
                         graphexecs[plane] = get_graphexec(
@@ -859,7 +927,9 @@ static void VS_CC BM3DCreate(
             });
         }
 
-        cuCtxPopCurrent(nullptr);
+        d->device = CUdevice{ std::move(device) };
+
+        checkError(cuCtxPopCurrent(nullptr));
     }
 
     vsapi->createFilter(
@@ -874,7 +944,8 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
 ) {
 
     configFunc(
-        "com.WolframRhodium.BM3DCUDA_RTC", "bm3dcuda_rtc", "BM3D algorithm implemented in CUDA (NVRTC)", 
+        "com.WolframRhodium.BM3DCUDA_RTC", "bm3dcuda_rtc", 
+        "BM3D algorithm implemented in CUDA (NVRTC)", 
         VAPOURSYNTH_API_VERSION, 1, plugin
     );
 

@@ -41,11 +41,23 @@ extern cudaGraphExec_t get_graphexec(
     bool chroma, float sigma_u, float sigma_v, 
     bool final_);
 
-#define checkError(expr) do {                                                               \
-    cudaError_t __err = expr;                                                               \
-    if (__err != cudaSuccess) {                                                             \
-        return set_error("'"s + # expr + "' failed: " + cudaGetErrorString(__err));         \
-    }                                                                                       \
+#define checkError(expr) do {                                                    \
+    cudaError_t __err = expr;                                                    \
+    if (__err != cudaSuccess) {                                                  \
+        const char * error_str = cudaGetErrorString(__err);                      \
+        return set_error("'"s + # expr + "' failed: " + error_str);              \
+    }                                                                            \
+} while(0)
+
+#define checkFilterError(expr) do {                                              \
+    cudaError_t __err = expr;                                                    \
+    if (__err != cudaSuccess) {                                                  \
+        const char * error_str = cudaGetErrorString(__err);                      \
+        const std::string error = "BM3D: '"s + # expr + "' faild: " + error_str; \
+        vsapi->setFilterError(error.c_str(), frameCtx);                          \
+        dst = nullptr;                                                           \
+        goto FINALIZE;                                                           \
+    }                                                                            \
 } while(0)
 
 constexpr int kFast = 4;
@@ -78,13 +90,13 @@ struct Resource {
     constexpr Resource() = default;
 
     constexpr Resource(Resource&& other) noexcept 
-            : data(std::exchange(other.data, nullptr)) 
+            : data(std::exchange(other.data, T{})) 
     { }
 
     constexpr Resource& operator=(Resource&& other) noexcept {
         if (this == &other) return *this;
         deleter_(data);
-        data = std::exchange(other.data, nullptr);
+        data = std::exchange(other.data, T{});
         return *this;
     }
 
@@ -301,9 +313,11 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 for (int i = 0; i < 3; ++i) {
                     for (int j = 0; j < temporal_width; ++j) {
                         if (i == 0 || d->process[i]) {
+                            auto current_src = srcs[j + outer * temporal_width].get();
+
                             vs_bitblt(
                                 h_src, d_pitch, 
-                                vsapi->getReadPtr(srcs[j + outer * temporal_width].get(), i), s_pitch, 
+                                vsapi->getReadPtr(current_src, i), s_pitch, 
                                 width_bytes, height
                             );
                         }
@@ -312,20 +326,14 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 }
             }
 
-            cudaGraphLaunch(graphexec, stream);
+            checkFilterError(cudaGraphLaunch(graphexec, stream));
 
-            if (auto error = cudaStreamSynchronize(stream); error != cudaSuccess) {
-                vsapi->setFilterError(
-                    ("BM3D: "s + cudaGetErrorString(error)).c_str(), 
-                    frameCtx
-                );
-                dst = nullptr;
-                goto FINALIZE;
-            }
+            checkFilterError(cudaStreamSynchronize(stream));
 
             for (int plane = 0; plane < 3; ++plane) {
                 if (d->process[plane]) {
-                    float * dstp = reinterpret_cast<float *>(vsapi->getWritePtr(dst.get(), plane));
+                    float * dstp = reinterpret_cast<float *>(
+                        vsapi->getWritePtr(dst.get(), plane));
 
                     if (radius) {
                         vs_bitblt(
@@ -363,18 +371,12 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         h_src += d_stride * height;
                     }
 
-                    cudaGraphLaunch(graphexec, stream);
+                    checkFilterError(cudaGraphLaunch(graphexec, stream));
 
-                    if (auto error = cudaStreamSynchronize(stream); error != cudaSuccess) {
-                        vsapi->setFilterError(
-                            ("BM3D: "s + cudaGetErrorString(error)).c_str(), 
-                            frameCtx
-                        );
-                        dst = nullptr;
-                        goto FINALIZE;
-                    }
+                    checkFilterError(cudaStreamSynchronize(stream));
 
-                    float * dstp = reinterpret_cast<float *>(vsapi->getWritePtr(dst.get(), plane));
+                    float * dstp = reinterpret_cast<float *>(
+                        vsapi->getWritePtr(dst.get(), plane));
 
                     if (radius) {
                         vs_bitblt(
@@ -659,11 +661,11 @@ static void VS_CC BM3DCreate(
             }
 
             d->resources.push_back(CUDA_Resource{
-                std::move(d_src), 
-                std::move(d_res), 
-                std::move(h_res), 
-                std::move(stream), 
-                { graphexecs[0], graphexecs[1], graphexecs[2] }
+                .d_src = std::move(d_src), 
+                .d_res = std::move(d_res), 
+                .h_res = std::move(h_res), 
+                .stream = std::move(stream), 
+                .graphexecs = { graphexecs[0], graphexecs[1], graphexecs[2] }
             });
         }
     }

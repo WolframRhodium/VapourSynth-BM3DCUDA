@@ -18,7 +18,7 @@ Please check [VapourSynth-BM3D](https://github.com/HomeOfVapourSynthEvolution/Va
 
 The minimum requirement on compute capability is 3.0, which requires manual compilation (specifying nvcc flag `-gencode arch=compute_30,code=sm_30`).
 
-The `_rtc` version compiles code at runtime. It requires GPU driver 465 or newer and has a dependency on `nvrtc64_112_0.dll/libnvrtc.so.11.2`.
+The `_rtc` version compiles code at runtime. It requires GPU driver 465 or newer and has dependencies on `nvrtc64_112_0.dll/libnvrtc.so.11.2` and `nvrtc-builtins64_113.dll/libnvrtc-builtins.so.11.3.109`.
 
 ## Parameters
 
@@ -83,5 +83,6 @@ g++-11 source.cpp kernel.o -o libbm3dcuda.so -shared -fPIC -I/usr/local/cuda-11.
 ### RTC version
 ```
 cd rtc_source
-g++-11 Source.cpp -o libbm3drtc.so -shared -fPIC -I /usr/local/cuda-11.3/include -I /usr/local/include -L /usr/local/cuda-11.3/lib64 -lnvrtc -lcuda -Wl,-rpath,/usr/local/cuda-11.3/lib64 --std=c++20 -march=native -O3
+
+g++-11 source.cpp -o libbm3drtc.so -shared -fPIC -I /usr/local/cuda-11.3/include -I /usr/local/include -L /usr/local/cuda-11.3/lib64 -lnvrtc -lcuda -Wl,-rpath,/usr/local/cuda-11.3/lib64 --std=c++20 -march=native -O3
 ```
