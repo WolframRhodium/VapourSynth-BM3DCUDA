@@ -55,7 +55,7 @@ using namespace std::string_literals;
 
 #define checkError(expr) do {                                                        \
     CUresult __err = expr;                                                           \
-    if (__err != CUDA_SUCCESS) {                                                     \
+    if (__err != CUDA_SUCCESS) [[unlikely]] {                                        \
         const char * error_str;                                                      \
         cuGetErrorString(__err, &error_str);                                         \
         return set_error("'"s + # expr + "' failed: " + error_str);                  \
@@ -64,14 +64,14 @@ using namespace std::string_literals;
 
 #define checkNVRTCError(expr) do {                                                   \
     nvrtcResult __err = expr;                                                        \
-    if (__err != NVRTC_SUCCESS) {                                                    \
+    if (__err != NVRTC_SUCCESS) [[unlikely]] {                                       \
         return set_error("'"s + # expr + "' failed: " + nvrtcGetErrorString(__err)); \
     }                                                                                \
 } while(0)
 
 #define checkFilterError(expr) do {                                                  \
     CUresult __err = expr;                                                           \
-    if (__err != CUDA_SUCCESS) {                                                     \
+    if (__err != CUDA_SUCCESS) [[unlikely]] {                                        \
         const char * error_str;                                                      \
         cuGetErrorString(__err, &error_str);                                         \
         const std::string error = "BM3D_RTC: '"s + # expr + "' faild: " + error_str; \
@@ -239,23 +239,34 @@ std::string compile(
     checkNVRTCError(nvrtcGetNumSupportedArchs(&num_archs));
     const auto supported_archs = std::make_unique<int []>(num_archs);
     checkNVRTCError(nvrtcGetSupportedArchs(supported_archs.get()));
+    bool generate_cubin = compute_capability <= supported_archs[num_archs - 1];
+
     std::string arch_str;
-    if (compute_capability > supported_archs[num_archs - 1]) {
-        arch_str = "-arch=compute_" + std::to_string(compute_capability);
-    } else {
+    if (generate_cubin) {
         arch_str = "-arch=sm_" + std::to_string(compute_capability);
+    } else {
+        arch_str = "-arch=compute_" + std::to_string(compute_capability);
     }
 
     const char * opts[] = { arch_str.c_str(), "-use_fast_math", "-std=c++17" };
     checkNVRTCError(nvrtcCompileProgram(program, (int) std::ssize(opts), opts));
 
-    size_t ptx_size;
-    checkNVRTCError(nvrtcGetPTXSize(program, &ptx_size));
-    const auto ptx_source = std::make_unique<char[]>(ptx_size);
-    checkNVRTCError(nvrtcGetPTX(program, ptx_source.get()));
-    checkNVRTCError(nvrtcDestroyProgram(&program));
+    std::unique_ptr<char[]> image;
+    if (generate_cubin) {
+        size_t cubin_size;
+        checkNVRTCError(nvrtcGetCUBINSize(program, &cubin_size));
+        image = std::make_unique<char[]>(cubin_size);
+        checkNVRTCError(nvrtcGetCUBIN(program, image.get()));
+    } else {
+        size_t ptx_size;
+        checkNVRTCError(nvrtcGetPTXSize(program, &ptx_size));
+        image = std::make_unique<char[]>(ptx_size);
+        checkNVRTCError(nvrtcGetPTX(program, image.get()));
+    }
 
-    checkError(cuModuleLoadDataEx(module_, ptx_source.get(), 0, nullptr, nullptr));
+    checkError(cuModuleLoadData(module_, image.get()));
+
+    checkNVRTCError(nvrtcDestroyProgram(&program));
 
     return "";
 }
@@ -892,7 +903,7 @@ static void VS_CC BM3DCreate(
                             CUmodule module_;
 
                             auto error = compile(&module_, 
-                                width, height, d_stride, 
+                                plane_width, plane_height, d_stride, 
                                 sigma[plane], block_step[plane], bm_range[plane], 
                                 radius, ps_num[plane], ps_range[plane], 
                                 false, 0.0f, 0.0f, final_, device
@@ -910,7 +921,7 @@ static void VS_CC BM3DCreate(
 
                         graphexecs[plane] = get_graphexec(
                             d_res, d_src, h_res, 
-                            width, height, d_stride, 
+                            plane_width, plane_height, d_stride, 
                             block_step[plane], radius, 
                             false, final_, context, functions[plane]
                         );

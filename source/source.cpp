@@ -43,7 +43,7 @@ extern cudaGraphExec_t get_graphexec(
 
 #define checkError(expr) do {                                                    \
     cudaError_t __err = expr;                                                    \
-    if (__err != cudaSuccess) {                                                  \
+    if (__err != cudaSuccess) [[unlikely]] {                                     \
         const char * error_str = cudaGetErrorString(__err);                      \
         return set_error("'"s + # expr + "' failed: " + error_str);              \
     }                                                                            \
@@ -51,7 +51,7 @@ extern cudaGraphExec_t get_graphexec(
 
 #define checkFilterError(expr) do {                                              \
     cudaError_t __err = expr;                                                    \
-    if (__err != cudaSuccess) {                                                  \
+    if (__err != cudaSuccess) [[unlikely]] {                                     \
         const char * error_str = cudaGetErrorString(__err);                      \
         const std::string error = "BM3D: '"s + # expr + "' faild: " + error_str; \
         vsapi->setFilterError(error.c_str(), frameCtx);                          \
@@ -292,8 +292,6 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             }
         }
 
-        float * d_src = d->resources[lock_idx].d_src;
-        float * d_res = d->resources[lock_idx].d_res;
         float * h_res = d->resources[lock_idx].h_res;
         cudaStream_t stream = d->resources[lock_idx].stream;
         int d_pitch = d->d_pitch;
@@ -619,9 +617,8 @@ static void VS_CC BM3DCreate(
             Resource<float *, cudaFree> d_res { d_res_ };
 
             float * h_res_;
-            checkError(cudaHostAlloc(&h_res_, 
-                num_planes * temporal_width * 2 * max_height * d_pitch, 
-                cudaHostAllocDefault));
+            checkError(cudaMallocHost(&h_res_, 
+                num_planes * temporal_width * 2 * max_height * d_pitch));
             Resource<float *, cudaFreeHost> h_res { h_res_ };
 
             cudaStream_t stream_;
@@ -643,16 +640,16 @@ static void VS_CC BM3DCreate(
                 auto subsamplingW = d->vi->format->subSamplingW;
                 auto subsamplingH = d->vi->format->subSamplingH;
 
-                for (int i = 0; i < 3; ++i) {
-                    if (d->process[i]) {
-                        int plane_width { i == 0 ? width : width >> subsamplingW };
-                        int plane_height { i == 0 ? height : height >> subsamplingH };
+                for (int plane = 0; plane < d->vi->format->numPlanes; ++plane) {
+                    if (d->process[plane]) {
+                        int plane_width { plane == 0 ? width : width >> subsamplingW };
+                        int plane_height { plane == 0 ? height : height >> subsamplingH };
 
-                        graphexecs[i] = get_graphexec(
+                        graphexecs[plane] = get_graphexec(
                             d_res, d_src, h_res, 
                             plane_width, plane_height, d_stride, 
-                            sigma[i], block_step[i], bm_range[i], 
-                            radius, ps_num[i], ps_range[i], 
+                            sigma[plane], block_step[plane], bm_range[plane], 
+                            radius, ps_num[plane], ps_range[plane], 
                             false, 0.0f, 0.0f, 
                             final_
                         );
