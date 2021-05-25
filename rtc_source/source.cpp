@@ -245,7 +245,7 @@ std::string compile(
     if (generate_cubin) {
         arch_str = "-arch=sm_" + std::to_string(compute_capability);
     } else {
-        arch_str = "-arch=compute_" + std::to_string(compute_capability);
+        arch_str = "-arch=compute_" + std::to_string(supported_archs[num_archs - 1]);
     }
 
     const char * opts[] = { arch_str.c_str(), "-use_fast_math", "-std=c++17" };
