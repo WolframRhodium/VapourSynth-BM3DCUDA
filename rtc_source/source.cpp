@@ -27,19 +27,20 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
-#include "cuda.h"
-#include "nvrtc.h"
-
-#include "vapoursynth/VapourSynth.h"
-#include "vapoursynth/VSHelper.h"
-
-#include "kernel.hpp"
+#include <cuda.h>
+#include <nvrtc.h>
 
 #ifdef _WIN64
-#include "windows.h"
+#include <windows.h>
 #endif
+
+#include <vapoursynth/VapourSynth.h>
+#include <vapoursynth/VSHelper.h>
+
+#include "kernel.hpp"
 
 #ifdef _MSC_VER
 #if defined (_WINDEF_) && defined(min) && defined(max)
@@ -84,13 +85,13 @@ using namespace std::string_literals;
 constexpr int kFast = 4;
 
 struct ticket_semaphore {
-    std::atomic<int> ticket {};
-    std::atomic<int> current {};
+    std::atomic<intptr_t> ticket {};
+    std::atomic<intptr_t> current {};
 
     void acquire() {
-        int tk { ticket.fetch_add(1, std::memory_order::acquire) };
+        intptr_t tk { ticket.fetch_add(1, std::memory_order::acquire) };
         while (true) {
-            int curr { current.load(std::memory_order::acquire) };
+            intptr_t curr { current.load(std::memory_order::acquire) };
             if (tk <= curr) {
                 return;
             }
@@ -108,7 +109,7 @@ template <typename T, auto deleter>
 struct Resource {
     T data;
 
-    constexpr Resource() = default;
+    constexpr Resource() noexcept = default;
 
     constexpr Resource(Resource&& other) noexcept 
             : data(std::exchange(other.data, T{})) 
@@ -125,25 +126,25 @@ struct Resource {
 
     Resource(const Resource& other) = delete;
 
-    constexpr operator T() {
+    constexpr operator T() const noexcept {
         return data;
     }
 
-    constexpr auto deleter_(T x) {
+    constexpr auto deleter_(T x) const noexcept {
         if (x) {
             deleter(x);
         }
     }
 
-    constexpr Resource& operator=(T x) {
+    constexpr Resource& operator=(T x) noexcept {
         deleter_(data);
         data = x;
         return *this;
     }
 
-    constexpr Resource(T x) : data(x) {}
+    constexpr Resource(T x) noexcept : data(x) {}
 
-    constexpr ~Resource() {
+    constexpr ~Resource() noexcept {
         deleter_(data);
     }
 };
@@ -184,8 +185,7 @@ struct BM3DData {
     std::vector<CUDA_Resource> resources;
 };
 
-std::string compile(
-    CUmodule * module_, 
+std::pair<CUmodule, std::string> compile(
     int width, int height, int stride, 
     float sigma, int block_step, int bm_range, 
     int radius, int ps_num, int ps_range, 
@@ -194,7 +194,7 @@ std::string compile(
 ) {
 
     auto set_error = [](auto error_message) {
-        return error_message;
+        return std::make_pair(CUmodule{}, error_message);
     };
 
     nvrtcProgram program;
@@ -249,7 +249,7 @@ std::string compile(
     }
 
     const char * opts[] = { arch_str.c_str(), "-use_fast_math", "-std=c++17" };
-    checkNVRTCError(nvrtcCompileProgram(program, (int) std::ssize(opts), opts));
+    checkNVRTCError(nvrtcCompileProgram(program, int{std::ssize(opts)}, opts));
 
     std::unique_ptr<char[]> image;
     if (generate_cubin) {
@@ -264,11 +264,12 @@ std::string compile(
         checkNVRTCError(nvrtcGetPTX(program, image.get()));
     }
 
-    checkError(cuModuleLoadData(module_, image.get()));
+    CUmodule module_;
+    checkError(cuModuleLoadData(&module_, image.get()));
 
     checkNVRTCError(nvrtcDestroyProgram(&program));
 
-    return "";
+    return {module_, ""};
 }
 
 CUgraphExec get_graphexec(
@@ -442,33 +443,38 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
         bool final_ = d->final_;
         int num_input_frames = temporal_width * (final_ ? 2 : 1); // including ref
 
-        std::vector<std::unique_ptr<const VSFrameRef, const freeFrame_t &>> srcs;
-        srcs.reserve(num_input_frames);
+        const std::vector srcs = [&](){
+            std::vector<std::unique_ptr<const VSFrameRef, const freeFrame_t &>> temp;
 
-        if (final_) {
-            for (int i = -radius; i <= radius; ++i) {
-                int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
-                srcs.emplace_back(
-                    vsapi->getFrameFilter(clamped_n, d->ref_node, frameCtx), 
-                    vsapi->freeFrame
-                );
+            temp.reserve(num_input_frames);
+
+            if (final_) {
+                for (int i = -radius; i <= radius; ++i) {
+                    int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
+                    temp.emplace_back(
+                        vsapi->getFrameFilter(clamped_n, d->ref_node, frameCtx), 
+                        vsapi->freeFrame
+                    );
+                }
+                for (int i = -radius; i <= radius; ++i) {
+                    int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
+                    temp.emplace_back(
+                        vsapi->getFrameFilter(clamped_n, d->node, frameCtx), 
+                        vsapi->freeFrame
+                    );
+                }
+            } else {
+                for (int i = -radius; i <= radius; ++i) {
+                    int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
+                    temp.emplace_back(
+                        vsapi->getFrameFilter(clamped_n, d->node, frameCtx), 
+                        vsapi->freeFrame
+                    );
+                }
             }
-            for (int i = -radius; i <= radius; ++i) {
-                int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
-                srcs.emplace_back(
-                    vsapi->getFrameFilter(clamped_n, d->node, frameCtx), 
-                    vsapi->freeFrame
-                );
-            }
-        } else {
-            for (int i = -radius; i <= radius; ++i) {
-                int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
-                srcs.emplace_back(
-                    vsapi->getFrameFilter(clamped_n, d->node, frameCtx), 
-                    vsapi->freeFrame
-                );
-            }
-        }
+
+            return temp;
+        }();
 
         const VSFrameRef * src = srcs[radius + (final_ ? temporal_width : 0)].get();
 
@@ -653,9 +659,9 @@ static void VS_CC BM3DCreate(
 
     d->node = vsapi->propGetNode(in, "clip", 0, nullptr);
     d->vi = vsapi->getVideoInfo(d->node);
-    int width = d->vi->width;
-    int height = d->vi->height;
-    int bits_per_sample = d->vi->format->bitsPerSample;
+    const int width = d->vi->width;
+    const int height = d->vi->height;
+    const int bits_per_sample = d->vi->format->bitsPerSample;
 
     if (
         !isConstantFormat(d->vi) || d->vi->format->sampleType == stInteger ||
@@ -729,10 +735,14 @@ static void VS_CC BM3DCreate(
         }
     }
 
-    int radius = int64ToIntS(vsapi->propGetInt(in, "radius", 0, &error));
-    if (error) {
-        radius = 0;
-    } else if (radius < 0) {
+    const int radius = [&](){
+        int temp = int64ToIntS(vsapi->propGetInt(in, "radius", 0, &error));
+        if (error) {
+            return 0;
+        }
+        return temp;
+    }();
+    if (radius < 0) {
         return set_error("\"radius\" must be non-negative");
     }
     d->radius = radius;
@@ -761,20 +771,26 @@ static void VS_CC BM3DCreate(
         }
     }
 
-    bool chroma = !!vsapi->propGetInt(in, "chroma", 0, &error);
-    if (error) {
-        chroma = false;
-    }
+    const bool chroma = [&](){
+        bool temp = !!vsapi->propGetInt(in, "chroma", 0, &error);
+        if (error) {
+            return false;
+        }
+        return temp;
+    }();
     if (chroma && d->vi->format->id != pfYUV444PS) {
         return set_error("clip format must be YUV444 when \"chroma\" is true");
     }
     d->chroma = chroma;
 
-    bool fast = !!vsapi->propGetInt(in, "fast", 0, &error);
-    if (error) {
-        fast = true;
-    }
-    int num_copy_engines { fast ? kFast : 1 }; 
+    const bool fast = [&](){
+        bool temp = !!vsapi->propGetInt(in, "fast", 0, &error);
+        if (error) {
+            return true;
+        }
+        return temp;
+    }();
+    const int num_copy_engines { fast ? kFast : 1 }; 
     d->num_copy_engines = num_copy_engines;
 
     d->semaphore.current.store(num_copy_engines - 1, std::memory_order::relaxed);
@@ -784,10 +800,13 @@ static void VS_CC BM3DCreate(
     {
         checkError(cuInit(0));
 
-        int device_id = int64ToIntS(vsapi->propGetInt(in, "device_id", 0, &error));
-        if (error) {
-            device_id = 0;
-        }
+        const int device_id = [&](){
+            int temp = int64ToIntS(vsapi->propGetInt(in, "device_id", 0, &error));
+            if (error) {
+                return 0;
+            }
+            return temp;
+        }();
         int device_count;
         checkError(cuDeviceGetCount(&device_count));
         CUdevice device_;
@@ -805,17 +824,11 @@ static void VS_CC BM3DCreate(
 
         d->resources.reserve(num_copy_engines);
 
-        int max_width, max_height;
-        if (d->process[0]) {
-            max_width = width;
-            max_height = height;
-        } else {
-            max_width = width >> d->vi->format->subSamplingW;
-            max_height = height >> d->vi->format->subSamplingH;
-        }
+        const int max_width { d->process[0] ? width : width >> d->vi->format->subSamplingW };
+        const int max_height { d->process[0] ? height : height >> d->vi->format->subSamplingH };
 
-        int num_planes { chroma ? 3 : 1 };
-        int temporal_width = 2 * radius + 1;
+        const int num_planes { chroma ? 3 : 1 };
+        const int temporal_width = 2 * radius + 1;
 
 #ifdef _WIN64
         const std::string plugin_path = 
@@ -823,7 +836,7 @@ static void VS_CC BM3DCreate(
         std::string folder_path = plugin_path.substr(0, plugin_path.find_last_of('/'));
         int nvrtc_major, nvrtc_minor;
         nvrtcVersion(&nvrtc_major, &nvrtc_minor);
-        int nvrtc_version = nvrtc_major * 10 + nvrtc_minor;
+        const int nvrtc_version = nvrtc_major * 10 + nvrtc_minor;
         const std::string dll_path = 
             folder_path + "/nvrtc-builtins64_" + std::to_string(nvrtc_version) + ".dll";
         const Resource<HMODULE, FreeLibrary> dll_handle = LoadLibraryA(dll_path.c_str());
@@ -865,9 +878,7 @@ static void VS_CC BM3DCreate(
             CUgraphExec graphexecs[3] {};
             if (chroma) {
                 if (i == 0) {
-                    CUmodule module_;
-
-                    auto error = compile(&module_, 
+                    auto [module_, error] = compile(
                         width, height, d_stride, 
                         sigma[0], block_step[0], bm_range[0], 
                         radius, ps_num[0], ps_range[0], 
@@ -900,9 +911,7 @@ static void VS_CC BM3DCreate(
                         int plane_height { plane == 0 ? height : height >> subsamplingH };
 
                         if (i == 0) {
-                            CUmodule module_;
-
-                            auto error = compile(&module_, 
+                            auto [module_, error] = compile(
                                 plane_width, plane_height, d_stride, 
                                 sigma[plane], block_step[plane], bm_range[plane], 
                                 radius, ps_num[plane], ps_range[plane], 
