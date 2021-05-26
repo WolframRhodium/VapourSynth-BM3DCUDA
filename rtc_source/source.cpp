@@ -132,7 +132,7 @@ struct Resource {
         return data;
     }
 
-    constexpr auto deleter_(T x) const noexcept {
+    constexpr auto deleter_(T x) noexcept {
         if (x) {
             deleter(x);
         }
@@ -525,7 +525,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
 
             float * h_src = h_res;
             for (int outer = 0; outer < (final_ ? 2 : 1); ++outer) {
-                for (int i = 0; i < 3; ++i) {
+                for (int i = 0; i < std::ssize(d->process); ++i) {
                     for (int j = 0; j < temporal_width; ++j) {
                         if (i == 0 || d->process[i]) {
                             auto current_src = srcs[j + outer * temporal_width].get();
@@ -545,7 +545,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
 
             checkFilterError(cuStreamSynchronize(stream));
 
-            for (int plane = 0; plane < 3; ++plane) {
+            for (int plane = 0; plane < std::ssize(d->process); ++plane) {
                 if (d->process[plane]) {
                     float * dstp = reinterpret_cast<float *>(
                         vsapi->getWritePtr(dst.get(), plane));
