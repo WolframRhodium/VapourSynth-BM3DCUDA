@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <string>
@@ -88,9 +89,11 @@ template <typename T, auto deleter>
 struct Resource {
     T data;
 
-    constexpr Resource() noexcept = default;
+    [[nodiscard]] constexpr Resource() noexcept = default;
 
-    constexpr Resource(Resource&& other) noexcept 
+    [[nodiscard]] constexpr Resource(T x) noexcept : data(x) {}
+
+    [[nodiscard]] constexpr Resource(Resource&& other) noexcept 
         : data(std::exchange(other.data, T{})) 
     { }
 
@@ -120,8 +123,6 @@ struct Resource {
         data = x;
         return *this;
     }
-
-    constexpr Resource(T x) noexcept : data(x) {}
 
     constexpr ~Resource() noexcept {
         deleter_(data);
@@ -286,17 +287,19 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             );
         }
 
-        int lock_idx = 0;
-        if (d->num_copy_engines > 1) {
-            d->semaphore.acquire();
+        const int lock_idx = [&](){
+            if (d->num_copy_engines > 1) {
+                d->semaphore.acquire();
 
-            for (int i = 0; i < d->num_copy_engines; ++i) {
-                if (!d->locks[i].test_and_set(std::memory_order::acquire)) {
-                    lock_idx = i;
-                    break;
+                for (int i = 0; i < d->num_copy_engines; ++i) {
+                    if (!d->locks[i].test_and_set(std::memory_order::acquire)) {
+                        return i;
+                    }
                 }
+            } else {
+                return 0;
             }
-        }
+        }();
 
         float * h_res = d->resources[lock_idx].h_res;
         cudaStream_t stream = d->resources[lock_idx].stream;

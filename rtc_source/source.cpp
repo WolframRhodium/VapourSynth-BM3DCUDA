@@ -20,7 +20,7 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cfloat>
+#include <cstdint>
 #include <ios>
 #include <limits>
 #include <memory>
@@ -109,9 +109,11 @@ template <typename T, auto deleter>
 struct Resource {
     T data;
 
-    constexpr Resource() noexcept = default;
+    [[nodiscard]] constexpr Resource() noexcept = default;
 
-    constexpr Resource(Resource&& other) noexcept 
+    [[nodiscard]] constexpr Resource(T x) noexcept : data(x) {}
+
+    [[nodiscard]] constexpr Resource(Resource&& other) noexcept 
             : data(std::exchange(other.data, T{})) 
     { }
 
@@ -141,8 +143,6 @@ struct Resource {
         data = x;
         return *this;
     }
-
-    constexpr Resource(T x) noexcept : data(x) {}
 
     constexpr ~Resource() noexcept {
         deleter_(data);
@@ -218,9 +218,9 @@ std::pair<CUmodule, std::string> compile(
         << "__device__ static const bool chroma = " << chroma << ";\n"
         << "__device__ static const bool final_ = " << final_ << ";\n"
         << "__device__ static const float FLT_MAX = " 
-            << std::hexfloat << FLT_MAX << ";\n"
+            << std::hexfloat << std::numeric_limits<float>::max() << ";\n"
         << "__device__ static const float FLT_EPSILON = " 
-            << std::hexfloat << FLT_EPSILON << ";\n"
+            << std::hexfloat << std::numeric_limits<float>::epsilon() << ";\n"
         << kernel_source_template;
     std::string kernel_source = kernel_source_io.str();
     checkNVRTCError(nvrtcCreateProgram(
@@ -282,8 +282,9 @@ CUgraphExec get_graphexec(
     int temporal_width { 2 * radius + 1 };
     int num_planes { chroma ? 3 : 1 };
 
-    CUgraph graph;
-    cuGraphCreate(&graph, 0);
+    CUgraph graph_;
+    cuGraphCreate(&graph_, 0);
+    Resource<CUgraph, cuGraphDestroy> graph { graph_ };
 
     CUgraphNode n_HtoD;
     {
@@ -374,8 +375,6 @@ CUgraphExec get_graphexec(
 
     CUgraphExec graphexec;
     cuGraphInstantiate(&graphexec, graph, nullptr, nullptr, 0);
-
-    cuGraphDestroy(graph);
 
     return graphexec;
 }
@@ -496,17 +495,19 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             );
         }
 
-        int lock_idx = 0;
-        if (d->num_copy_engines > 1) {
-            d->semaphore.acquire();
+        const int lock_idx = [&](){
+            if (d->num_copy_engines > 1) {
+                d->semaphore.acquire();
 
-            for (int i = 0; i < d->num_copy_engines; ++i) {
-                if (!d->locks[i].test_and_set(std::memory_order::acquire)) {
-                    lock_idx = i;
-                    break;
+                for (int i = 0; i < d->num_copy_engines; ++i) {
+                    if (!d->locks[i].test_and_set(std::memory_order::acquire)) {
+                        return i;
+                    }
                 }
+            } else {
+                return 0;
             }
-        }
+        }();
 
         float * h_res = d->resources[lock_idx].h_res;
         CUstream stream = d->resources[lock_idx].stream;
@@ -878,7 +879,7 @@ static void VS_CC BM3DCreate(
             CUgraphExec graphexecs[3] {};
             if (chroma) {
                 if (i == 0) {
-                    auto [module_, error] = compile(
+                    auto [module_, error_message] = compile(
                         width, height, d_stride, 
                         sigma[0], block_step[0], bm_range[0], 
                         radius, ps_num[0], ps_range[0], 
@@ -886,10 +887,10 @@ static void VS_CC BM3DCreate(
                         final_, device
                     );
 
-                    if (error.empty()) {
+                    if (error_message.empty()) {
                         d->modules[0] = module_;
                     } else {
-                        return set_error(error);
+                        return set_error(error_message);
                     }
 
                     checkError(cuModuleGetFunction(&functions[0], d->modules[0], "bm3d"));
@@ -911,17 +912,17 @@ static void VS_CC BM3DCreate(
                         int plane_height { plane == 0 ? height : height >> subsamplingH };
 
                         if (i == 0) {
-                            auto [module_, error] = compile(
+                            auto [module_, error_message] = compile(
                                 plane_width, plane_height, d_stride, 
                                 sigma[plane], block_step[plane], bm_range[plane], 
                                 radius, ps_num[plane], ps_range[plane], 
                                 false, 0.0f, 0.0f, final_, device
                             );
 
-                            if (error.empty()) {
+                            if (error_message.empty()) {
                                 d->modules[plane] = module_;
                             } else {
-                                return set_error(error);
+                                return set_error(error_message);
                             }
 
                             checkError(cuModuleGetFunction(
