@@ -495,19 +495,17 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             );
         }
 
-        const int lock_idx = [&](){
-            if (d->num_copy_engines > 1) {
-                d->semaphore.acquire();
+        int lock_idx = 0;
+        if (d->num_copy_engines > 1) {
+            d->semaphore.acquire();
 
-                for (int i = 0; i < d->num_copy_engines; ++i) {
-                    if (!d->locks[i].test_and_set(std::memory_order::acquire)) {
-                        return i;
-                    }
+            for (int i = 0; i < d->num_copy_engines; ++i) {
+                if (!d->locks[i].test_and_set(std::memory_order::acquire)) {
+                    lock_idx = 0;
+                    break;
                 }
-            } else {
-                return 0;
             }
-        }();
+        }
 
         float * h_res = d->resources[lock_idx].h_res;
         CUstream stream = d->resources[lock_idx].stream;
