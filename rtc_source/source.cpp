@@ -222,7 +222,7 @@ std::pair<CUmodule, std::string> compile(
         << "__device__ static const float FLT_EPSILON = " 
             << std::hexfloat << std::numeric_limits<float>::epsilon() << ";\n"
         << kernel_source_template;
-    std::string kernel_source = kernel_source_io.str();
+    const std::string kernel_source = kernel_source_io.str();
     checkNVRTCError(nvrtcCreateProgram(
         &program, kernel_source.c_str(), nullptr, 0, nullptr, nullptr));
 
@@ -241,12 +241,11 @@ std::pair<CUmodule, std::string> compile(
     checkNVRTCError(nvrtcGetSupportedArchs(supported_archs.get()));
     bool generate_cubin = compute_capability <= supported_archs[num_archs - 1];
 
-    std::string arch_str;
-    if (generate_cubin) {
-        arch_str = "-arch=sm_" + std::to_string(compute_capability);
-    } else {
-        arch_str = "-arch=compute_" + std::to_string(supported_archs[num_archs - 1]);
-    }
+    const std::string arch_str = { 
+        generate_cubin ? 
+        "-arch=sm_" + std::to_string(compute_capability) : 
+        "-arch=compute_" + std::to_string(supported_archs[num_archs - 1])
+    };
 
     const char * opts[] = { arch_str.c_str(), "-use_fast_math", "-std=c++17" };
     checkNVRTCError(nvrtcCompileProgram(program, int{std::ssize(opts)}, opts));
@@ -501,7 +500,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
 
             for (int i = 0; i < d->num_copy_engines; ++i) {
                 if (!d->locks[i].test_and_set(std::memory_order::acquire)) {
-                    lock_idx = 0;
+                    lock_idx = i;
                     break;
                 }
             }

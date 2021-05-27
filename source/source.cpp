@@ -293,7 +293,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
 
             for (int i = 0; i < d->num_copy_engines; ++i) {
                 if (!d->locks[i].test_and_set(std::memory_order::acquire)) {
-                    lock_idx = 0;
+                    lock_idx = i;
                     break;
                 }
             }
