@@ -18,7 +18,7 @@ Please check [VapourSynth-BM3D](https://github.com/HomeOfVapourSynthEvolution/Va
 
 The minimum requirement on compute capability is 3.0, which requires manual compilation (specifying nvcc flag `-gencode arch=compute_30,code=sm_30`).
 
-The `_rtc` version compiles code at runtime. It requires GPU driver 465 or newer and has dependencies on `nvrtc64_112_0.dll/libnvrtc.so.11.2` and `nvrtc-builtins64_113.dll/libnvrtc-builtins.so.11.3.109`.
+The `_rtc` version compiles GPU code at runtime, which might runs faster at the cost of slight overhead. It requires GPU driver 465 or newer and has dependencies on `nvrtc64_112_0.dll/libnvrtc.so.11.2` and `nvrtc-builtins64_113.dll/libnvrtc-builtins.so.11.3.109`.
 
 ## Parameters
 

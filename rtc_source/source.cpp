@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <concepts>
 #include <cstdint>
 #include <ios>
 #include <limits>
@@ -27,14 +28,16 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <cuda.h>
 #include <nvrtc.h>
 
 #ifdef _WIN64
-#include <windows.h>
+#   include <windows.h>
 #endif
 
 #include <vapoursynth/VapourSynth.h>
@@ -43,13 +46,13 @@
 #include "kernel.hpp"
 
 #ifdef _MSC_VER
-#if defined (_WINDEF_) && defined(min) && defined(max)
-#undef min
-#undef max
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
+#   if defined (_WINDEF_) && defined(min) && defined(max)
+#       undef min
+#       undef max
+#   endif
+#   ifndef NOMINMAX
+#       define NOMINMAX
+#   endif
 #endif
 
 using namespace std::string_literals;
@@ -70,25 +73,13 @@ using namespace std::string_literals;
     }                                                                                \
 } while(0)
 
-#define checkFilterError(expr) do {                                                  \
-    CUresult __err = expr;                                                           \
-    if (__err != CUDA_SUCCESS) [[unlikely]] {                                        \
-        const char * error_str;                                                      \
-        cuGetErrorString(__err, &error_str);                                         \
-        const std::string error = "BM3D_RTC: '"s + # expr + "' faild: " + error_str; \
-        vsapi->setFilterError(error.c_str(), frameCtx);                              \
-        dst = nullptr;                                                               \
-        goto FINALIZE;                                                               \
-    }                                                                                \
-} while(0)
-
 constexpr int kFast = 4;
 
 struct ticket_semaphore {
     std::atomic<intptr_t> ticket {};
     std::atomic<intptr_t> current {};
 
-    void acquire() {
+    void acquire() noexcept {
         intptr_t tk { ticket.fetch_add(1, std::memory_order::acquire) };
         while (true) {
             intptr_t curr { current.load(std::memory_order::acquire) };
@@ -99,13 +90,18 @@ struct ticket_semaphore {
         }
     }
 
-    void release() {
+    void release() noexcept {
         current.fetch_add(1, std::memory_order::release);
         current.notify_all();
     }
 };
 
 template <typename T, auto deleter>
+    requires 
+        std::default_initializable<T> &&
+        std::is_trivially_copy_assignable_v<T> &&
+        std::convertible_to<T, bool> &&
+        std::invocable<decltype(deleter), T>
 struct Resource {
     T data;
 
@@ -117,7 +113,7 @@ struct Resource {
             : data(std::exchange(other.data, T{})) 
     { }
 
-    constexpr Resource& operator=(Resource&& other) noexcept {
+    Resource& operator=(Resource&& other) noexcept {
         if (this == &other) return *this;
         deleter_(data);
         data = std::exchange(other.data, T{});
@@ -138,7 +134,7 @@ struct Resource {
         }
     }
 
-    constexpr Resource& operator=(T x) noexcept {
+    Resource& operator=(T x) noexcept {
         deleter_(data);
         data = x;
         return *this;
@@ -185,44 +181,43 @@ struct BM3DData {
     std::vector<CUDA_Resource> resources;
 };
 
-std::pair<CUmodule, std::string> compile(
+static std::variant<CUmodule, std::string> compile(
     int width, int height, int stride, 
     float sigma, int block_step, int bm_range, 
     int radius, int ps_num, int ps_range, 
     bool chroma, float sigma_u, float sigma_v, 
     bool final_, CUdevice device
-) {
+) noexcept {
 
-    auto set_error = [](auto error_message) {
-        return std::make_pair(CUmodule{}, error_message);
+    const auto set_error = [](const std::string & error_message) {
+        return error_message;
     };
 
-    nvrtcProgram program;
     std::ostringstream kernel_source_io;
     kernel_source_io
+        << std::hexfloat << std::boolalpha
         << "__device__ static const int width = " << width << ";\n"
         << "__device__ static const int height = " << height << ";\n"
         << "__device__ static const int stride = " << stride << ";\n"
-        << "__device__ static const float sigma_y = " 
-            << std::hexfloat << sigma << ";\n"
+        << "__device__ static const float sigma_y = " << sigma << ";\n"
         << "__device__ static const int block_step = " << block_step << ";\n"
         << "__device__ static const int bm_range = " << bm_range << ";\n"
         << "__device__ static const int _radius = " << radius << ";\n"
         << "__device__ static const int ps_num = " << ps_num << ";\n"
         << "__device__ static const int ps_range = " << ps_range << ";\n"
-        << "__device__ static const float sigma_u = " 
-            << std::hexfloat << sigma_u << ";\n"
-        << "__device__ static const float sigma_v = " 
-            << std::hexfloat << sigma_v << ";\n"
+        << "__device__ static const float sigma_u = " << sigma_u << ";\n"
+        << "__device__ static const float sigma_v = " << sigma_v << ";\n"
         << "__device__ static const bool temporal = " << (radius > 0) << ";\n"
         << "__device__ static const bool chroma = " << chroma << ";\n"
         << "__device__ static const bool final_ = " << final_ << ";\n"
         << "__device__ static const float FLT_MAX = " 
-            << std::hexfloat << std::numeric_limits<float>::max() << ";\n"
+            << std::numeric_limits<float>::max() << ";\n"
         << "__device__ static const float FLT_EPSILON = " 
-            << std::hexfloat << std::numeric_limits<float>::epsilon() << ";\n"
+            << std::numeric_limits<float>::epsilon() << ";\n"
         << kernel_source_template;
     const std::string kernel_source = kernel_source_io.str();
+
+    nvrtcProgram program;
     checkNVRTCError(nvrtcCreateProgram(
         &program, kernel_source.c_str(), nullptr, 0, nullptr, nullptr));
 
@@ -247,7 +242,12 @@ std::pair<CUmodule, std::string> compile(
         "-arch=compute_" + std::to_string(supported_archs[num_archs - 1])
     };
 
-    const char * opts[] = { arch_str.c_str(), "-use_fast_math", "-std=c++17" };
+    const char * opts[] = { 
+        arch_str.c_str(), 
+        "-use_fast_math", 
+        "-std=c++17", 
+        "-modify-stack-limit=false"
+    };
     checkNVRTCError(nvrtcCompileProgram(program, int{std::ssize(opts)}, opts));
 
     std::unique_ptr<char[]> image;
@@ -263,26 +263,31 @@ std::pair<CUmodule, std::string> compile(
         checkNVRTCError(nvrtcGetPTX(program, image.get()));
     }
 
+    checkNVRTCError(nvrtcDestroyProgram(&program));
+
     CUmodule module_;
     checkError(cuModuleLoadData(&module_, image.get()));
 
-    checkNVRTCError(nvrtcDestroyProgram(&program));
-
-    return {module_, ""};
+    return module_;
 }
 
-CUgraphExec get_graphexec(
+static std::variant<CUgraphExec, std::string> get_graphexec(
     CUdeviceptr d_res, CUdeviceptr d_src, float * h_res, 
     int width, int height, int stride, 
     int block_step, int radius, bool chroma,
     bool final_, CUcontext context, CUfunction function
-) {
+) noexcept {
+
+    const auto set_error = [](const std::string & error_message) {
+        return error_message;
+    };
+
     size_t pitch { stride * sizeof(float) };
     int temporal_width { 2 * radius + 1 };
     int num_planes { chroma ? 3 : 1 };
 
     CUgraph graph_;
-    cuGraphCreate(&graph_, 0);
+    checkError(cuGraphCreate(&graph_, 0));
     Resource<CUgraph, cuGraphDestroy> graph { graph_ };
 
     CUgraphNode n_HtoD;
@@ -303,7 +308,7 @@ CUgraphExec get_graphexec(
             .Depth = 1, 
         };
 
-        cuGraphAddMemcpyNode(&n_HtoD, graph, nullptr, 0, &copy_params, context);
+        checkError(cuGraphAddMemcpyNode(&n_HtoD, graph, nullptr, 0, &copy_params, context));
     }
 
     CUgraphNode n_memset;
@@ -321,7 +326,7 @@ CUgraphExec get_graphexec(
             .height = logical_height
         };
 
-        cuGraphAddMemsetNode(&n_memset, graph, nullptr, 0, &memset_params, context);
+        checkError(cuGraphAddMemsetNode(&n_memset, graph, nullptr, 0, &memset_params, context));
     }
 
     CUgraphNode n_kernel;
@@ -344,8 +349,8 @@ CUgraphExec get_graphexec(
             .kernelParams = kernel_args, 
         };
 
-        cuGraphAddKernelNode(
-            &n_kernel, graph, dependencies, std::size(dependencies), &node_params);
+        checkError(cuGraphAddKernelNode(
+            &n_kernel, graph, dependencies, std::size(dependencies), &node_params));
     }
 
     CUgraphNode n_DtoH;
@@ -368,12 +373,12 @@ CUgraphExec get_graphexec(
             .Depth = 1, 
         };
 
-        cuGraphAddMemcpyNode(
-            &n_DtoH, graph, dependencies, std::size(dependencies), &copy_params, context);
+        checkError(cuGraphAddMemcpyNode(
+            &n_DtoH, graph, dependencies, std::size(dependencies), &copy_params, context));
     }
 
     CUgraphExec graphexec;
-    cuGraphInstantiate(&graphexec, graph, nullptr, nullptr, 0);
+    checkError(cuGraphInstantiate(&graphexec, graph, nullptr, nullptr, 0));
 
     return graphexec;
 }
@@ -382,7 +387,7 @@ static inline void Aggregation(
     float * VS_RESTRICT dstp, 
     const float * VS_RESTRICT h_res, 
     int width, int height, int s_stride, int d_stride
-) {
+) noexcept {
 
     const float * wdst = h_res;
     const float * weight = &h_res[height * d_stride];
@@ -401,7 +406,7 @@ static inline void Aggregation(
 static void VS_CC BM3DInit(
     VSMap *in, VSMap *out, void **instanceData, VSNode *node, 
     VSCore *core, const VSAPI *vsapi
-) {
+) noexcept {
 
     BM3DData * d = static_cast<BM3DData *>(*instanceData);
 
@@ -417,7 +422,7 @@ static void VS_CC BM3DInit(
 static const VSFrameRef *VS_CC BM3DGetFrame(
     int n, int activationReason, void **instanceData, void **frameData, 
     VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi
-) {
+) noexcept {
 
     using freeFrame_t = decltype(vsapi->freeFrame);
 
@@ -504,14 +509,27 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                     break;
                 }
             }
+
+            // impossible
         }
+
+        const auto set_error = [&](const std::string & error_message) {
+            if (d->num_copy_engines > 1) {
+                d->locks[lock_idx].clear(std::memory_order::release);
+                d->semaphore.release();
+            }
+
+            vsapi->setFilterError(("BM3D_RTC: " + error_message).c_str(), frameCtx);
+
+            return nullptr;
+        };
 
         float * h_res = d->resources[lock_idx].h_res;
         CUstream stream = d->resources[lock_idx].stream;
         int d_pitch = d->d_pitch;
         int d_stride = d_pitch / sizeof(float);
 
-        checkFilterError(cuCtxPushCurrent(d->context));
+        checkError(cuCtxPushCurrent(d->context));
 
         if (d->chroma) {
             int width = vsapi->getFrameWidth(src, 0);
@@ -540,9 +558,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 }
             }
 
-            checkFilterError(cuGraphLaunch(graphexec, stream));
+            checkError(cuGraphLaunch(graphexec, stream));
 
-            checkFilterError(cuStreamSynchronize(stream));
+            checkError(cuStreamSynchronize(stream));
 
             for (int plane = 0; plane < std::ssize(d->process); ++plane) {
                 if (d->process[plane]) {
@@ -585,9 +603,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         h_src += d_stride * height;
                     }
 
-                    checkFilterError(cuGraphLaunch(graphexec, stream));
+                    checkError(cuGraphLaunch(graphexec, stream));
 
-                    checkFilterError(cuStreamSynchronize(stream));
+                    checkError(cuStreamSynchronize(stream));
 
                     float * dstp = reinterpret_cast<float *>(
                         vsapi->getWritePtr(dst.get(), plane));
@@ -607,15 +625,14 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             }
         }
 
-        checkFilterError(cuCtxPopCurrent(nullptr));
+        checkError(cuCtxPopCurrent(nullptr));
 
-FINALIZE:
         if (d->num_copy_engines > 1) {
             d->locks[lock_idx].clear(std::memory_order::release);
             d->semaphore.release();
         }
 
-        if (radius && dst) {
+        if (radius) {
             VSMap * dst_prop { vsapi->getFramePropsRW(dst.get()) };
 
             vsapi->propSetInt(dst_prop, "BM3D_V_radius", d->radius, paReplace);
@@ -632,7 +649,7 @@ FINALIZE:
 
 static void VS_CC BM3DFree(
     void *instanceData, VSCore *core, const VSAPI *vsapi
-) {
+) noexcept {
 
     auto d = static_cast<BM3DData *>(instanceData);
 
@@ -645,11 +662,11 @@ static void VS_CC BM3DFree(
 static void VS_CC BM3DCreate(
     const VSMap *in, VSMap *out, void *userData, 
     VSCore *core, const VSAPI *vsapi
-) {
+) noexcept {
 
     auto d { std::make_unique<BM3DData>() };
 
-    auto set_error = [&](const std::string & error_message) {
+    const auto set_error = [&](const std::string & error_message) {
         vsapi->setError(out, ("BM3D_RTC: " + error_message).c_str());
         vsapi->freeNode(d->node);
         vsapi->freeNode(d->ref_node);
@@ -876,7 +893,7 @@ static void VS_CC BM3DCreate(
             CUgraphExec graphexecs[3] {};
             if (chroma) {
                 if (i == 0) {
-                    auto [module_, error_message] = compile(
+                    const auto result = compile(
                         width, height, d_stride, 
                         sigma[0], block_step[0], bm_range[0], 
                         radius, ps_num[0], ps_range[0], 
@@ -884,21 +901,27 @@ static void VS_CC BM3DCreate(
                         final_, device
                     );
 
-                    if (error_message.empty()) {
-                        d->modules[0] = module_;
+                    if (std::holds_alternative<CUmodule>(result)) {
+                        d->modules[0] = std::get<CUmodule>(result);
                     } else {
-                        return set_error(error_message);
+                        return set_error(std::get<std::string>(result));
                     }
 
                     checkError(cuModuleGetFunction(&functions[0], d->modules[0], "bm3d"));
                 }
 
-                graphexecs[0] = get_graphexec(
+                const auto result = get_graphexec(
                     d_res, d_src, h_res, 
                     width, height, d_stride, 
                     block_step[0], radius, 
                     true, final_, context, functions[0]
                 );
+
+                if (std::holds_alternative<CUgraphExec>(result)) {
+                    graphexecs[0] = std::get<CUgraphExec>(result);
+                } else {
+                    return set_error(std::get<std::string>(result));
+                }
             } else {
                 auto subsamplingW = d->vi->format->subSamplingW;
                 auto subsamplingH = d->vi->format->subSamplingH;
@@ -909,29 +932,35 @@ static void VS_CC BM3DCreate(
                         int plane_height { plane == 0 ? height : height >> subsamplingH };
 
                         if (i == 0) {
-                            auto [module_, error_message] = compile(
+                            const auto result = compile(
                                 plane_width, plane_height, d_stride, 
                                 sigma[plane], block_step[plane], bm_range[plane], 
                                 radius, ps_num[plane], ps_range[plane], 
                                 false, 0.0f, 0.0f, final_, device
                             );
 
-                            if (error_message.empty()) {
-                                d->modules[plane] = module_;
+                            if (std::holds_alternative<CUmodule>(result)) {
+                                d->modules[plane] = std::get<CUmodule>(result);
                             } else {
-                                return set_error(error_message);
+                                return set_error(std::get<std::string>(result));
                             }
 
                             checkError(cuModuleGetFunction(
                                 &functions[plane], d->modules[plane], "bm3d"));
                         }
 
-                        graphexecs[plane] = get_graphexec(
+                        const auto result = get_graphexec(
                             d_res, d_src, h_res, 
                             plane_width, plane_height, d_stride, 
                             block_step[plane], radius, 
                             false, final_, context, functions[plane]
                         );
+
+                        if (std::holds_alternative<CUgraphExec>(result)) {
+                            graphexecs[plane] = std::get<CUgraphExec>(result);
+                        } else {
+                            return set_error(std::get<std::string>(result));
+                        }
                     }
                 }
             }

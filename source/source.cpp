@@ -20,11 +20,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <concepts>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -41,7 +43,7 @@ extern cudaGraphExec_t get_graphexec(
     float sigma, int block_step, int bm_range, 
     int radius, int ps_num, int ps_range, 
     bool chroma, float sigma_u, float sigma_v, 
-    bool final_);
+    bool final_) noexcept;
 
 #define checkError(expr) do {                                                    \
     cudaError_t __err = expr;                                                    \
@@ -51,24 +53,13 @@ extern cudaGraphExec_t get_graphexec(
     }                                                                            \
 } while(0)
 
-#define checkFilterError(expr) do {                                              \
-    cudaError_t __err = expr;                                                    \
-    if (__err != cudaSuccess) [[unlikely]] {                                     \
-        const char * error_str = cudaGetErrorString(__err);                      \
-        const std::string error = "BM3D: '"s + # expr + "' faild: " + error_str; \
-        vsapi->setFilterError(error.c_str(), frameCtx);                          \
-        dst = nullptr;                                                           \
-        goto FINALIZE;                                                           \
-    }                                                                            \
-} while(0)
-
 constexpr int kFast = 4;
 
 struct ticket_semaphore {
     std::atomic<intptr_t> ticket {};
     std::atomic<intptr_t> current {};
 
-    void acquire() {
+    void acquire() noexcept {
         intptr_t tk { ticket.fetch_add(1, std::memory_order::acquire) };
         while (true) {
             intptr_t curr { current.load(std::memory_order::acquire) };
@@ -79,13 +70,18 @@ struct ticket_semaphore {
         }
     }
 
-    void release() {
+    void release() noexcept {
         current.fetch_add(1, std::memory_order::release);
         current.notify_all();
     }
 };
 
 template <typename T, auto deleter>
+    requires 
+        std::default_initializable<T> &&
+        std::is_trivially_copy_assignable_v<T> &&
+        std::convertible_to<T, bool> &&
+        std::invocable<decltype(deleter), T>
 struct Resource {
     T data;
 
@@ -167,7 +163,7 @@ static inline void Aggregation(
     float * VS_RESTRICT dstp, 
     const float * VS_RESTRICT h_res, 
     int width, int height, int s_stride, int d_stride
-) {
+) noexcept {
 
     const float * wdst = h_res;
     const float * weight = &h_res[height * d_stride];
@@ -186,7 +182,7 @@ static inline void Aggregation(
 static void VS_CC BM3DInit(
     VSMap *in, VSMap *out, void **instanceData, VSNode *node, 
     VSCore *core, const VSAPI *vsapi
-) {
+) noexcept {
 
     BM3DData * d = static_cast<BM3DData *>(*instanceData);
 
@@ -202,7 +198,7 @@ static void VS_CC BM3DInit(
 static const VSFrameRef *VS_CC BM3DGetFrame(
     int n, int activationReason, void **instanceData, void **frameData, 
     VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi
-) {
+) noexcept {
 
     using freeFrame_t = decltype(vsapi->freeFrame);
 
@@ -297,7 +293,20 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                     break;
                 }
             }
+
+            // impossible
         }
+
+        const auto set_error = [&](const std::string & error_message) {
+            if (d->num_copy_engines > 1) {
+                d->locks[lock_idx].clear(std::memory_order::release);
+                d->semaphore.release();
+            }
+
+            vsapi->setFilterError(("BM3D: " + error_message).c_str(), frameCtx);
+
+            return nullptr;
+        };
 
         float * h_res = d->resources[lock_idx].h_res;
         cudaStream_t stream = d->resources[lock_idx].stream;
@@ -331,9 +340,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 }
             }
 
-            checkFilterError(cudaGraphLaunch(graphexec, stream));
+            checkError(cudaGraphLaunch(graphexec, stream));
 
-            checkFilterError(cudaStreamSynchronize(stream));
+            checkError(cudaStreamSynchronize(stream));
 
             for (int plane = 0; plane < std::ssize(d->process); ++plane) {
                 if (d->process[plane]) {
@@ -376,9 +385,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         h_src += d_stride * height;
                     }
 
-                    checkFilterError(cudaGraphLaunch(graphexec, stream));
+                    checkError(cudaGraphLaunch(graphexec, stream));
 
-                    checkFilterError(cudaStreamSynchronize(stream));
+                    checkError(cudaStreamSynchronize(stream));
 
                     float * dstp = reinterpret_cast<float *>(
                         vsapi->getWritePtr(dst.get(), plane));
@@ -398,13 +407,12 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             }
         }
 
-FINALIZE:
         if (d->num_copy_engines > 1) {
             d->locks[lock_idx].clear(std::memory_order::release);
             d->semaphore.release();
         }
 
-        if (radius && dst) {
+        if (radius) {
             VSMap * dst_prop { vsapi->getFramePropsRW(dst.get()) };
 
             vsapi->propSetInt(dst_prop, "BM3D_V_radius", d->radius, paReplace);
@@ -421,7 +429,7 @@ FINALIZE:
 
 static void VS_CC BM3DFree(
     void *instanceData, VSCore *core, const VSAPI *vsapi
-) {
+) noexcept {
 
     auto d = static_cast<BM3DData *>(instanceData);
 
@@ -434,11 +442,11 @@ static void VS_CC BM3DFree(
 static void VS_CC BM3DCreate(
     const VSMap *in, VSMap *out, void *userData, 
     VSCore *core, const VSAPI *vsapi
-) {
+) noexcept {
 
     auto d { std::make_unique<BM3DData>() };
 
-    auto set_error = [&](const std::string & error_message) {
+    const auto set_error = [&](const std::string & error_message) {
         vsapi->setError(out, ("BM3D: " + error_message).c_str());
         vsapi->freeNode(d->node);
         vsapi->freeNode(d->ref_node);

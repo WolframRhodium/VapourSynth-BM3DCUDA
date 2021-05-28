@@ -49,7 +49,7 @@ cudaGraphExec_t get_graphexec(
     float sigma, int block_step, int bm_range, 
     int radius, int ps_num, int ps_range, 
     bool chroma, float sigma_u, float sigma_v, 
-    bool final_);
+    bool final_) noexcept;
 
 static constexpr int smem_stride = 32 + 1;
 
@@ -754,7 +754,7 @@ cudaGraphExec_t get_graphexec(
     float sigma, int block_step, int bm_range, 
     int radius, int ps_num, int ps_range, 
     bool chroma, float sigma_u, float sigma_v, bool final_
-) {
+) noexcept {
 
     size_t pitch { stride * sizeof(float) };
     int temporal_width { 2 * radius + 1 };
