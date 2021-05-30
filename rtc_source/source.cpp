@@ -656,7 +656,12 @@ static void VS_CC BM3DFree(
     vsapi->freeNode(d->node);
     vsapi->freeNode(d->ref_node);
 
+    auto device = std::move(d->device);
+    cuCtxPushCurrent(d->context);
+
     delete d;
+
+    cuCtxPopCurrent(nullptr);
 }
 
 static void VS_CC BM3DCreate(

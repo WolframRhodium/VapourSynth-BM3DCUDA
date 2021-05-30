@@ -436,6 +436,8 @@ static void VS_CC BM3DFree(
     vsapi->freeNode(d->node);
     vsapi->freeNode(d->ref_node);
 
+    cudaSetDevice(d->device_id);
+
     delete d;
 }
 
