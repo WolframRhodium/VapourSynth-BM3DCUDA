@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <concepts>
 #include <cstdint>
 #include <ios>
@@ -57,20 +58,18 @@
 
 using namespace std::string_literals;
 
-#define checkError(expr) do {                                                        \
-    CUresult __err = expr;                                                           \
-    if (__err != CUDA_SUCCESS) [[unlikely]] {                                        \
-        const char * error_str;                                                      \
-        cuGetErrorString(__err, &error_str);                                         \
-        return set_error("'"s + # expr + "' failed: " + error_str);                  \
-    }                                                                                \
+#define checkError(expr) do {                                                         \
+    if (CUresult result = expr; result != CUDA_SUCCESS) [[unlikely]] {                \
+        const char * error_str;                                                       \
+        cuGetErrorString(result, &error_str);                                         \
+        return set_error("'"s + # expr + "' failed: " + error_str);                   \
+    }                                                                                 \
 } while(0)
 
-#define checkNVRTCError(expr) do {                                                   \
-    nvrtcResult __err = expr;                                                        \
-    if (__err != NVRTC_SUCCESS) [[unlikely]] {                                       \
-        return set_error("'"s + # expr + "' failed: " + nvrtcGetErrorString(__err)); \
-    }                                                                                \
+#define checkNVRTCError(expr) do {                                                    \
+    if (nvrtcResult result = expr; result != NVRTC_SUCCESS) [[unlikely]] {            \
+        return set_error("'"s + # expr + "' failed: " + nvrtcGetErrorString(result)); \
+    }                                                                                 \
 } while(0)
 
 constexpr int kFast = 4;
@@ -170,6 +169,8 @@ struct BM3DData {
     bool chroma;
     bool process[3]; // sigma != 0
     bool final_;
+    std::string transform_2d_s[3];
+    std::string transform_1d_s[3];
 
     int d_pitch;
 
@@ -186,7 +187,10 @@ static std::variant<CUmodule, std::string> compile(
     float sigma, int block_step, int bm_range, 
     int radius, int ps_num, int ps_range, 
     bool chroma, float sigma_u, float sigma_v, 
-    bool final_, CUdevice device
+    bool final_, 
+    const std::string & transform_2d_s, 
+    const std::string & transform_1d_s, 
+    CUdevice device
 ) noexcept {
 
     const auto set_error = [](const std::string & error_message) {
@@ -195,6 +199,9 @@ static std::variant<CUmodule, std::string> compile(
 
     std::ostringstream kernel_source_io;
     kernel_source_io
+        << kernel_header_template
+        << "#define transform_2d " << transform_2d_s << "\n"
+        << "#define transform_1d " << transform_1d_s << "\n"
         << std::hexfloat << std::boolalpha
         << "__device__ static const int width = " << width << ";\n"
         << "__device__ static const int height = " << height << ";\n"
@@ -657,6 +664,7 @@ static void VS_CC BM3DFree(
     vsapi->freeNode(d->ref_node);
 
     auto device = std::move(d->device);
+
     cuCtxPushCurrent(d->context);
 
     delete d;
@@ -813,6 +821,40 @@ static void VS_CC BM3DCreate(
     const int num_copy_engines { fast ? kFast : 1 }; 
     d->num_copy_engines = num_copy_engines;
 
+    for (int i = 0; i < std::ssize(d->transform_2d_s); ++i) {
+        auto _temp = vsapi->propGetData(in, "transform_2d_s", i, &error);
+        auto temp = std::string{ _temp ? _temp : "" };
+        if (error) {
+            temp = (i == 0) ? "dct" : d->transform_2d_s[i - 1];
+        } else {
+            std::for_each(temp.begin(), temp.end(), [](char & c){c = std::tolower(c);});
+            if (temp != "dct" && temp != "haar" && temp != "wht" && temp != "bior1.5") {
+                return set_error("invalid \'transform_2d_s\': " + temp);
+            }
+            if (temp == "bior1.5") {
+                temp = "bior1_5";
+            }
+        }
+        d->transform_2d_s[i] = std::move(temp);
+    }
+
+    for (int i = 0; i < std::ssize(d->transform_1d_s); ++i) {
+        auto _temp = vsapi->propGetData(in, "transform_1d_s", i, &error);
+        auto temp = std::string{ _temp ? _temp : "" };
+        if (error) {
+            temp = (i == 0) ? "dct" : d->transform_1d_s[i - 1];
+        } else {
+            std::for_each(temp.begin(), temp.end(), [](char & c){c = std::tolower(c);});
+            if (temp != "dct" && temp != "haar" && temp != "wht" && temp != "bior1.5") {
+                return set_error("invalid \'transform_1d_s\': "  + temp);
+            }
+            if (temp == "bior1.5") {
+                temp = "bior1_5";
+            }
+        }
+        d->transform_1d_s[i] = std::move(temp);
+    }
+
     d->semaphore.current.store(num_copy_engines - 1, std::memory_order::relaxed);
     d->locks = std::make_unique<std::atomic_flag[]>(num_copy_engines);
 
@@ -852,7 +894,7 @@ static void VS_CC BM3DCreate(
 
 #ifdef _WIN64
         const std::string plugin_path = 
-            vsapi->getPluginPath(vsapi->getPluginById("com.WolframRhodium.BM3DCUDA_RTC", core));
+            vsapi->getPluginPath(vsapi->getPluginById("com.wolframrhodium.bm3dcuda_rtc", core));
         std::string folder_path = plugin_path.substr(0, plugin_path.find_last_of('/'));
         int nvrtc_major, nvrtc_minor;
         nvrtcVersion(&nvrtc_major, &nvrtc_minor);
@@ -903,7 +945,8 @@ static void VS_CC BM3DCreate(
                         sigma[0], block_step[0], bm_range[0], 
                         radius, ps_num[0], ps_range[0], 
                         true, sigma[1], sigma[2], 
-                        final_, device
+                        final_, d->transform_2d_s[i], d->transform_1d_s[i], 
+                        device
                     );
 
                     if (std::holds_alternative<CUmodule>(result)) {
@@ -941,7 +984,9 @@ static void VS_CC BM3DCreate(
                                 plane_width, plane_height, d_stride, 
                                 sigma[plane], block_step[plane], bm_range[plane], 
                                 radius, ps_num[plane], ps_range[plane], 
-                                false, 0.0f, 0.0f, final_, device
+                                false, 0.0f, 0.0f, final_, 
+                                d->transform_2d_s[i], d->transform_1d_s[i], 
+                                device
                             );
 
                             if (std::holds_alternative<CUmodule>(result)) {
@@ -996,8 +1041,8 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
 ) {
 
     configFunc(
-        "com.WolframRhodium.BM3DCUDA_RTC", "bm3dcuda_rtc", 
-        "BM3D algorithm implemented in CUDA (NVRTC)", 
+        "com.wolframrhodium.bm3dcuda_rtc", "bm3dcuda_rtc", 
+        "BM3D algorithm implemented in CUDA (NVRTC2)", 
         VAPOURSYNTH_API_VERSION, 1, plugin
     );
 
@@ -1012,7 +1057,9 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
         "ps_range:int[]:opt;"
         "chroma:int:opt;"
         "device_id:int:opt;"
-        "fast:int:opt;",
+        "fast:int:opt;"
+        "transform_2d_s:data[]:opt;"
+        "transform_1d_s:data[]:opt;",
         BM3DCreate, nullptr, plugin
     );
 }
