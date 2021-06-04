@@ -171,6 +171,7 @@ struct BM3DData {
     bool final_;
     std::string transform_2d_s[3];
     std::string transform_1d_s[3];
+    int extractor;
 
     int d_pitch;
 
@@ -190,6 +191,7 @@ static std::variant<CUmodule, std::string> compile(
     bool final_, 
     const std::string & transform_2d_s, 
     const std::string & transform_1d_s, 
+    int extractor, 
     CUdevice device
 ) noexcept {
 
@@ -217,6 +219,7 @@ static std::variant<CUmodule, std::string> compile(
         << "__device__ static const bool temporal = " << (radius > 0) << ";\n"
         << "__device__ static const bool chroma = " << chroma << ";\n"
         << "__device__ static const bool final_ = " << final_ << ";\n"
+        << "__device__ static const float extractor = static_cast<float>(" << extractor << ");\n"
         << "__device__ static const float FLT_MAX = " 
             << std::numeric_limits<float>::max() << ";\n"
         << "__device__ static const float FLT_EPSILON = " 
@@ -855,6 +858,15 @@ static void VS_CC BM3DCreate(
         d->transform_1d_s[i] = std::move(temp);
     }
 
+    const int extractor = [&](){
+        int temp = int64ToIntS(vsapi->propGetInt(in, "extractor", 0, &error));
+        if (error) {
+            return 0;
+        }
+        return temp;
+    }();
+    d->extractor = extractor;
+
     d->semaphore.current.store(num_copy_engines - 1, std::memory_order::relaxed);
     d->locks = std::make_unique<std::atomic_flag[]>(num_copy_engines);
 
@@ -946,6 +958,7 @@ static void VS_CC BM3DCreate(
                         radius, ps_num[0], ps_range[0], 
                         true, sigma[1], sigma[2], 
                         final_, d->transform_2d_s[i], d->transform_1d_s[i], 
+                        d->extractor, 
                         device
                     );
 
@@ -986,6 +999,7 @@ static void VS_CC BM3DCreate(
                                 radius, ps_num[plane], ps_range[plane], 
                                 false, 0.0f, 0.0f, final_, 
                                 d->transform_2d_s[i], d->transform_1d_s[i], 
+                                d->extractor, 
                                 device
                             );
 
@@ -1059,7 +1073,8 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
         "device_id:int:opt;"
         "fast:int:opt;"
         "transform_2d_s:data[]:opt;"
-        "transform_1d_s:data[]:opt;",
+        "transform_1d_s:data[]:opt;"
+        "extractor:int:opt;",
         BM3DCreate, nullptr, plugin
     );
 }

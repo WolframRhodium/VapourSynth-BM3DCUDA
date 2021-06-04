@@ -52,7 +52,8 @@ external variables:
     bool temporal, bool chroma, bool final_
     float FLT_MAX, float FLT_EPSILON, 
     template<bool> __device__ static inline void transform_2d(float [8]), 
-    template<bool> __device__ static inline void transform_1d(float [8])
+    template<bool> __device__ static inline void transform_1d(float [8]), 
+    float extractor
 */
 
 #define FMA(a, b, c) (((a) * (b)) + (c))
@@ -87,7 +88,6 @@ static inline void transform_pack8_interleave4(
 // modified from fftw-3.3.9 generated code:
 // fftw-3.3.9/rdft/scalar/r2r/e10_8.c and e01_8.c
 // (normalized, scaled) DCT-II/DCT-III
-// launched by blockDim(x=32, y=1, z=1)
 template <bool forward>
 __device__
 static inline void dct(float v[8]) {
@@ -183,7 +183,6 @@ static inline void dct(float v[8]) {
 }
 
 // (normalized, scaled) Haar transform
-// launched by blockDim(x=32, y=1, z=1)
 template <bool forward>
 __device__
 static inline void haar(float v[8]) {
@@ -205,15 +204,15 @@ static inline void haar(float v[8]) {
         auto T11 = T5 + T7; // 00001111
         auto T12 = KP1_414213562 * (T5 - T7);
 
-        auto s = KP1_414213562;
-        v[0] = s * (T9 + T11);
-        v[1] = s * (T9 - T11);
-        v[2] = s * T10;
-        v[3] = s * T12;
-        v[4] = s * KP2_000000000 * T2;
-        v[5] = s * KP2_000000000 * T4;
-        v[6] = s * KP2_000000000 * T6;
-        v[7] = s * KP2_000000000 * T8;
+        auto scale = KP1_414213562;
+        v[0] = scale * (T9 + T11);
+        v[1] = scale * (T9 - T11);
+        v[2] = scale * T10;
+        v[3] = scale * T12;
+        v[4] = scale * KP2_000000000 * T2;
+        v[5] = scale * KP2_000000000 * T4;
+        v[6] = scale * KP2_000000000 * T6;
+        v[7] = scale * KP2_000000000 * T8;
     } else {
         float KP1_414213562 {+1.414213562373095048801688724209698078569671875};
         float KP2_000000000 {+2.000000000000000000000000000000000000000000000};
@@ -229,20 +228,19 @@ static inline void haar(float v[8]) {
         auto T9 = -KP1_414213562 * v[2] + KP2_000000000 * v[4];
         auto T10 = -KP1_414213562 * v[2] - KP2_000000000 * v[4];
 
-        auto s = KP1_414213562;
-        v[0] = s * (T1 + T3);
-        v[1] = s * (T1 + T4);
-        v[2] = s * (T1 + T5);
-        v[3] = s * (T1 + T6);
-        v[4] = s * (T2 + T7);
-        v[5] = s * (T2 + T8);
-        v[6] = s * (T2 + T9);
-        v[7] = s * (T2 + T10);
+        auto scale = KP1_414213562;
+        v[0] = scale * (T1 + T3);
+        v[1] = scale * (T1 + T4);
+        v[2] = scale * (T1 + T5);
+        v[3] = scale * (T1 + T6);
+        v[4] = scale * (T2 + T7);
+        v[5] = scale * (T2 + T8);
+        v[6] = scale * (T2 + T9);
+        v[7] = scale * (T2 + T10);
     }
 }
 
 // (normalized, scaled) Walsh-Hadamard transform
-// launched by blockDim(x=32, y=1, z=1)
 template <bool forward>
 __device__
 static inline void wht(float v[8]) {
@@ -266,19 +264,18 @@ static inline void wht(float v[8]) {
     auto T15 = T6 + T8; // 00001-11-1
     auto T16 = T6 - T8; // 00001-1-11
 
-    float s = KP1_414213562;
-    v[0] = s * (T9 + T13);
-    v[1] = s * (T9 - T13);
-    v[2] = s * (T10 - T14);
-    v[3] = s * (T10 + T14);
-    v[4] = s * (T12 + T16);
-    v[5] = s * (T12 - T16);
-    v[6] = s * (T11 - T15);
-    v[7] = s * (T11 + T15);
+    float scale = KP1_414213562;
+    v[0] = scale * (T9 + T13);
+    v[1] = scale * (T9 - T13);
+    v[2] = scale * (T10 - T14);
+    v[3] = scale * (T10 + T14);
+    v[4] = scale * (T12 + T16);
+    v[5] = scale * (T12 - T16);
+    v[6] = scale * (T11 - T15);
+    v[7] = scale * (T11 + T15);
 }
 
 // (normalized, scaled) Bi-orthogonal spline transform (1.5)
-// launched by blockDim(x=32, y=1, z=1)
 template <bool forward>
 __device__
 static inline void bior1_5(float v[8]) {
@@ -433,22 +430,20 @@ static inline float collaborative_hard(
     constexpr int stride1 = 1;
     constexpr int stride2 = stride1 * 8;
     
+    #pragma unroll
     for (int ndim = 0; ndim < 2; ++ndim) {
         transform_pack8_interleave4<transform_2d<true>, stride1, 8, stride2>(denoising_patch, buffer);
-
         transpose_pack8_interleave4<stride1, 8, stride2>(denoising_patch, buffer);
     }
-
     transform_pack8_interleave4<transform_1d<true>, stride2, 8, stride1>(denoising_patch, buffer);
 
     float adaptive_weight = hard_thresholding<stride1>(denoising_patch, sigma);
 
+    #pragma unroll
     for (int ndim = 0; ndim < 2; ++ndim) {
         transform_pack8_interleave4<transform_2d<false>, stride1, 8, stride2>(denoising_patch, buffer);
-
         transpose_pack8_interleave4<stride1, 8, stride2>(denoising_patch, buffer);
     }
-
     transform_pack8_interleave4<transform_1d<false>, stride2, 8, stride1>(denoising_patch, buffer);
 
     return adaptive_weight;
@@ -511,13 +506,14 @@ static inline float collaborative_soft(
     constexpr int stride1 = 1;
     constexpr int stride2 = stride1 * 8;
     
+    #pragma unroll
     for (int ndim = 0; ndim < 2; ++ndim) {
         transform_pack8_interleave4<transform_2d<true>, stride1, 8, stride2>(denoising_patch, buffer);
         transpose_pack8_interleave4<stride1, 8, stride2>(denoising_patch, buffer);
     }
-
     transform_pack8_interleave4<transform_1d<true>, stride2, 8, stride1>(denoising_patch, buffer);
 
+    #pragma unroll
     for (int ndim = 0; ndim < 2; ++ndim) {
         transform_pack8_interleave4<transform_2d<true>, stride1, 8, stride2>(ref_patch, buffer);
         transpose_pack8_interleave4<stride1, 8, stride2>(ref_patch, buffer);
@@ -526,6 +522,7 @@ static inline float collaborative_soft(
 
     float adaptive_weight = soft_thresholding<stride1>(denoising_patch, ref_patch, sigma);
 
+    #pragma unroll
     for (int ndim = 0; ndim < 2; ++ndim) {
         transform_pack8_interleave4<transform_2d<false>, stride1, 8, stride2>(denoising_patch, buffer);
         transpose_pack8_interleave4<stride1, 8, stride2>(denoising_patch, buffer);
@@ -893,8 +890,15 @@ void bm3d(
 
             #pragma unroll
             for (int j = 0; j < 8; ++j) {
-                atomicAdd(&wdstp[j * stride], adaptive_weight * denoising_patch[i * 8 + j]);
-                atomicAdd(&weightp[j * stride], adaptive_weight);
+                float wdst_val = adaptive_weight * denoising_patch[i * 8 + j];
+                float weight_val = adaptive_weight;
+
+                // pre-rounding
+                wdst_val = (wdst_val + extractor) - extractor;
+                weight_val = (weight_val + extractor) - extractor;
+
+                atomicAdd(&wdstp[j * stride], wdst_val);
+                atomicAdd(&weightp[j * stride], weight_val);
             }
         }
 
