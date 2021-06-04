@@ -68,7 +68,6 @@ static inline void dct_pack8_interleave4(
     float KP1_847759065 {+1.847759065022573512256366378793576573644833252};
     float KP198912367 {+0.198912367379658006911597622644676228597850501};
     float KP1_961570560 {1.961570560806460898252364472268478073947867462};
-    float KP2_000000000 {+2.000000000000000000000000000000000000000000000};
     float KP1_414213562 {+1.414213562373095048801688724209698078569671875};
     float KP668178637 {+0.668178637919298919997757686523080761552472251};
     float KP1_662939224 {+1.662939224605090474157576755235811513477121624};
@@ -110,7 +109,7 @@ static inline void dct_pack8_interleave4(
                 auto Tp = Tj + Tk;
                 auto Tq = Tm + Tn;
                 v[4] = KP1_414213562 * (Tp - Tq);
-                v[0] = KP2_000000000 * (Tp + Tq);
+                v[0] = KP1_414213562 * (Tp + Tq);
                 auto Th = FMA(KP707106781, Ta, T3);
                 auto Ti = FMA(KP707106781, Tf, Te);
                 v[1] = KP1_961570560 * (FNMS(KP198912367, Ti, Th));
@@ -178,7 +177,7 @@ static inline void idct_pack8_interleave4(
 
         for (int dim_iter = 0; dim_iter < dim; ++dim_iter) {
             { // idct8
-                auto T1 = v[0];
+                auto T1 = v[0] * KP1_414213562;
                 auto T2 = v[4];
                 auto T3 = FMA(KP1_414213562, T2, T1);
                 auto Tj = FNMS(KP1_414213562, T2, T1);
@@ -261,11 +260,9 @@ static inline float hard_thresholding(float * data, float sigma) {
 
         float thr;
         if (i == 0) {
-            thr = (lane_id % 8) ? sigma * 2.0f : 0.0f; // protects DC component
-        } else if (i < 8 || i % 8 == 0) {
-            thr = (lane_id % 8) ? sigma * sqrtf(2.0f) : sigma * 2.0f;
+            thr = (lane_id % 8) ? sigma : 0.0f; // protects DC component
         } else {
-            thr = (lane_id % 8) ? sigma : sigma * sqrtf(2.0f);
+            thr = sigma;
         }
 
         float flag = fabsf(val) >= thr;

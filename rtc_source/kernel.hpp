@@ -86,7 +86,7 @@ static inline void transform_pack8_interleave4(
 
 // modified from fftw-3.3.9 generated code:
 // fftw-3.3.9/rdft/scalar/r2r/e10_8.c and e01_8.c
-// 1-D DCT-II/DCT-III (8 points)
+// (normalized, scaled) DCT-II/DCT-III
 // launched by blockDim(x=32, y=1, z=1)
 template <bool forward>
 __device__
@@ -96,7 +96,6 @@ static inline void dct(float v[8]) {
         float KP1_847759065 {+1.847759065022573512256366378793576573644833252};
         float KP198912367 {+0.198912367379658006911597622644676228597850501};
         float KP1_961570560 {+1.961570560806460898252364472268478073947867462};
-        float KP2_000000000 {+2.000000000000000000000000000000000000000000000};
         float KP1_414213562 {+1.414213562373095048801688724209698078569671875};
         float KP668178637 {+0.668178637919298919997757686523080761552472251};
         float KP1_662939224 {+1.662939224605090474157576755235811513477121624};
@@ -127,7 +126,7 @@ static inline void dct(float v[8]) {
         auto Tp = Tj + Tk;
         auto Tq = Tm + Tn;
         v[4] = KP1_414213562 * (Tp - Tq);
-        v[0] = KP2_000000000 * (Tp + Tq);
+        v[0] = KP1_414213562 * (Tp + Tq);
         auto Th = FMA(KP707106781, Ta, T3);
         auto Ti = FMA(KP707106781, Tf, Te);
         v[1] = KP1_961570560 * (FNMS(KP198912367, Ti, Th));
@@ -146,7 +145,7 @@ static inline void dct(float v[8]) {
         float KP414213562 {+0.414213562373095048801688724209698078569671875};
         float KP1_414213562 {+1.414213562373095048801688724209698078569671875};
 
-        auto T1 = v[0];
+        auto T1 = v[0] * KP1_414213562;
         auto T2 = v[4];
         auto T3 = FMA(KP1_414213562, T2, T1);
         auto Tj = FNMS(KP1_414213562, T2, T1);
@@ -184,6 +183,7 @@ static inline void dct(float v[8]) {
 }
 
 // (normalized, scaled) Haar transform
+// launched by blockDim(x=32, y=1, z=1)
 template <bool forward>
 __device__
 static inline void haar(float v[8]) {
@@ -242,6 +242,7 @@ static inline void haar(float v[8]) {
 }
 
 // (normalized, scaled) Walsh-Hadamard transform
+// launched by blockDim(x=32, y=1, z=1)
 template <bool forward>
 __device__
 static inline void wht(float v[8]) {
@@ -277,6 +278,7 @@ static inline void wht(float v[8]) {
 }
 
 // (normalized, scaled) Bi-orthogonal spline transform (1.5)
+// launched by blockDim(x=32, y=1, z=1)
 template <bool forward>
 __device__
 static inline void bior1_5(float v[8]) {
@@ -347,6 +349,7 @@ static inline void bior1_5(float v[8]) {
 }
 )""" R"""(
 // 2-D transposition
+// launched by blockDim(x=32, y=1, z=1)
 template <int stride=256, int howmany=8, int howmany_stride=32>
 __device__
 static inline void transpose_pack8_interleave4(
@@ -393,11 +396,9 @@ static inline float hard_thresholding(float * data, float sigma) {
 
         float thr;
         if (i == 0) {
-            thr = (lane_id % 8) ? sigma * 2.0f : 0.0f; // protects DC component
-        } else if (i < 8 || i % 8 == 0) {
-            thr = (lane_id % 8) ? sigma * sqrtf(2.0f) : sigma * 2.0f;
+            thr = (lane_id % 8) ? sigma : 0.0f; // protects DC component
         } else {
-            thr = (lane_id % 8) ? sigma : sigma * sqrtf(2.0f);
+            thr = sigma;
         }
 
         float flag = fabsf(val) >= thr;

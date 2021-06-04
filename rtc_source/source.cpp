@@ -1042,7 +1042,7 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
 
     configFunc(
         "com.wolframrhodium.bm3dcuda_rtc", "bm3dcuda_rtc", 
-        "BM3D algorithm implemented in CUDA (NVRTC2)", 
+        "BM3D algorithm implemented in CUDA (NVRTC)", 
         VAPOURSYNTH_API_VERSION, 1, plugin
     );
 
