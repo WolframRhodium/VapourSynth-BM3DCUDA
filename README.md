@@ -65,14 +65,14 @@ bm3dcuda[_rtc].BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_st
 
 - `bm3d.VAggregate` should be called after temporal filtering, as in `VapourSynth-BM3D`.
 
-- The `_rtc` version also has two experimental parameters:
+- The `_rtc` version has two experimental parameters:
 
     - transform_2d_s/transform_1d_s: (string)<br />
         Specify type of transform.<br />
         Currently implemented transforms: `DCT`, `Haar`, `WHT`, `Bior1.5`.<br />
         Default `DCT`.<br />
-        <br />
-        This feature is not implemented in the standard version due to performance and binary size concerns.
+
+    This feature is not implemented in the standard version due to performance and binary size concerns.
 
 ## Statistics
 
