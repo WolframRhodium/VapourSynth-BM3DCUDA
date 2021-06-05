@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <concepts>
 #include <cstdint>
 #include <limits>
@@ -43,7 +44,8 @@ extern cudaGraphExec_t get_graphexec(
     float sigma, int block_step, int bm_range, 
     int radius, int ps_num, int ps_range, 
     bool chroma, float sigma_u, float sigma_v, 
-    bool final_) noexcept;
+    bool final_, float extractor
+) noexcept;
 
 #define checkError(expr) do {                                                    \
     cudaError_t __err = expr;                                                    \
@@ -150,6 +152,7 @@ struct BM3DData {
     bool chroma;
     bool process[3]; // sigma != 0
     bool final_;
+    int extractor_exp;
 
     int d_pitch;
     int device_id;
@@ -606,6 +609,15 @@ static void VS_CC BM3DCreate(
     const int num_copy_engines { fast ? kFast : 1 }; 
     d->num_copy_engines = num_copy_engines;
 
+    const int extractor_exp = [&](){
+        int temp = int64ToIntS(vsapi->propGetInt(in, "extractor_exp", 0, &error));
+        if (error) {
+            return 0;
+        }
+        return temp;
+    }();
+    d->extractor_exp = extractor_exp;
+
     // GPU resource allocation
     {
         d->semaphore.current.store(num_copy_engines - 1, std::memory_order::relaxed);
@@ -650,6 +662,7 @@ static void VS_CC BM3DCreate(
                 cudaStreamNonBlocking));
             Resource<cudaStream_t, cudaStreamDestroy> stream { stream_ };
 
+            float extractor { d->extractor_exp ? std::ldexpf(1.0f, d->extractor_exp) : 0.f };
             cudaGraphExec_t graphexecs[3] {};
             if (d->chroma) {
                 graphexecs[0] = get_graphexec(
@@ -658,7 +671,7 @@ static void VS_CC BM3DCreate(
                     sigma[0], block_step[0], bm_range[0], 
                     radius, ps_num[0], ps_range[0], 
                     true, sigma[1], sigma[2], 
-                    final_
+                    final_, extractor
                 );
             } else {
                 auto subsamplingW = d->vi->format->subSamplingW;
@@ -675,7 +688,7 @@ static void VS_CC BM3DCreate(
                             sigma[plane], block_step[plane], bm_range[plane], 
                             radius, ps_num[plane], ps_range[plane], 
                             false, 0.0f, 0.0f, 
-                            final_
+                            final_, extractor
                         );
                     }
                 }
@@ -718,7 +731,8 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
         "ps_range:int[]:opt;"
         "chroma:int:opt;"
         "device_id:int:opt;"
-        "fast:int:opt;",
+        "fast:int:opt;"
+        "extractor_exp:int:opt",
         BM3DCreate, nullptr, plugin
     );
 }

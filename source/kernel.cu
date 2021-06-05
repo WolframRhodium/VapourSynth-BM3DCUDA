@@ -49,29 +49,16 @@ cudaGraphExec_t get_graphexec(
     float sigma, int block_step, int bm_range, 
     int radius, int ps_num, int ps_range, 
     bool chroma, float sigma_u, float sigma_v, 
-    bool final_) noexcept;
+    bool final_, float extractor
+) noexcept;
 
 static constexpr int smem_stride = 32 + 1;
 
-// modified from fftw-3.3.9 generated code:
-// fftw-3.3.9/rdft/scalar/r2r/e10_8.c
-// 1/2-D DCT-II (8 points)
-// launched by blockDim(x=32, y=1, z=1)
-template <int dim=1, int stride=256, int howmany=8, int howmany_stride=32>
+template <auto transform_impl, int stride=256, int howmany=8, int howmany_stride=32>
 __device__
-static inline void dct_pack8_interleave4(
+static inline void transform_pack8_interleave4(
     float * __restrict__ data, float * __restrict__ buffer
 ) {
-    static_assert(1 <= dim && dim <= 2, "Invalid dim");
-
-    float KP414213562 {+0.414213562373095048801688724209698078569671875};
-    float KP1_847759065 {+1.847759065022573512256366378793576573644833252};
-    float KP198912367 {+0.198912367379658006911597622644676228597850501};
-    float KP1_961570560 {1.961570560806460898252364472268478073947867462};
-    float KP1_414213562 {+1.414213562373095048801688724209698078569671875};
-    float KP668178637 {+0.668178637919298919997757686523080761552472251};
-    float KP1_662939224 {+1.662939224605090474157576755235811513477121624};
-    float KP707106781 {+0.707106781186547524400844362104849039284835938};
 
     #pragma unroll
     for (int iter = 0; iter < howmany; ++iter, data += howmany_stride) {
@@ -82,62 +69,7 @@ static inline void dct_pack8_interleave4(
             v[i] = data[i * stride];
         }
 
-        for (int dim_iter = 0; dim_iter < dim; ++dim_iter) {
-            { // dct8
-                auto T1 = v[0];
-                auto T2 = v[7];
-                auto T3 = T1 - T2;
-                auto Tj = T1 + T2;
-                auto Tc = v[4];
-                auto Td = v[3];
-                auto Te = Tc - Td;
-                auto Tk = Tc + Td;
-                auto T4 = v[2];
-                auto T5 = v[5];
-                auto T6 = T4 - T5;
-                auto T7 = v[1];
-                auto T8 = v[6];
-                auto T9 = T7 - T8;
-                auto Ta = T6 + T9;
-                auto Tn = T7 + T8;
-                auto Tf = T6 - T9;
-                auto Tm = T4 + T5;
-                auto Tb = FNMS(KP707106781, Ta, T3);
-                auto Tg = FNMS(KP707106781, Tf, Te);
-                v[3] = KP1_662939224 * (FMA(KP668178637, Tg, Tb));
-                v[5] = -(KP1_662939224 * (FNMS(KP668178637, Tb, Tg)));
-                auto Tp = Tj + Tk;
-                auto Tq = Tm + Tn;
-                v[4] = KP1_414213562 * (Tp - Tq);
-                v[0] = KP1_414213562 * (Tp + Tq);
-                auto Th = FMA(KP707106781, Ta, T3);
-                auto Ti = FMA(KP707106781, Tf, Te);
-                v[1] = KP1_961570560 * (FNMS(KP198912367, Ti, Th));
-                v[7] = KP1_961570560 * (FMA(KP198912367, Th, Ti));
-                auto Tl = Tj - Tk;
-                auto To = Tm - Tn;
-                v[2] = KP1_847759065 * (FNMS(KP414213562, To, Tl));
-                v[6] = KP1_847759065 * (FMA(KP414213562, Tl, To));
-            }
-
-            if (dim >= 2) // && dim_iter <= 1
-            { // transpose
-                int lane_id;
-                asm("mov.u32 %0, %%laneid;" : "=r"(lane_id));
-
-                #pragma unroll
-                for (int i = 0; i < 8; ++i) {
-                    buffer[i * smem_stride + lane_id] = v[i];
-                }
-
-                __syncwarp();
-
-                #pragma unroll
-                for (int i = 0; i < 8; ++i) {
-                    v[i] = buffer[lane_id % 8 * smem_stride + (lane_id & -8) + i];
-                }
-            }
-        }
+        transform_impl(v);
 
         #pragma unroll
         for (int i = 0; i < 8; ++i) {
@@ -147,94 +79,125 @@ static inline void dct_pack8_interleave4(
 }
 
 // modified from fftw-3.3.9 generated code:
-// fftw-3.3.9/rdft/scalar/r2r/e01_8.c
-// 1/2-D DCT-III (8 points)
-// launched by blockDim(x=32, y=1, z=1)
-template <int dim=1, int stride=256, int howmany=8, int howmany_stride=32>
+// fftw-3.3.9/rdft/scalar/r2r/e10_8.c and e01_8.c
+// (normalized, scaled) DCT-II/DCT-III
+template <bool forward>
 __device__
-static inline void idct_pack8_interleave4(
+static inline void dct(float v[8]) {
+    if constexpr (forward) {
+        float KP414213562 {+0.414213562373095048801688724209698078569671875};
+        float KP1_847759065 {+1.847759065022573512256366378793576573644833252};
+        float KP198912367 {+0.198912367379658006911597622644676228597850501};
+        float KP1_961570560 {+1.961570560806460898252364472268478073947867462};
+        float KP1_414213562 {+1.414213562373095048801688724209698078569671875};
+        float KP668178637 {+0.668178637919298919997757686523080761552472251};
+        float KP1_662939224 {+1.662939224605090474157576755235811513477121624};
+        float KP707106781 {+0.707106781186547524400844362104849039284835938};
+
+        auto T1 = v[0];
+        auto T2 = v[7];
+        auto T3 = T1 - T2;
+        auto Tj = T1 + T2;
+        auto Tc = v[4];
+        auto Td = v[3];
+        auto Te = Tc - Td;
+        auto Tk = Tc + Td;
+        auto T4 = v[2];
+        auto T5 = v[5];
+        auto T6 = T4 - T5;
+        auto T7 = v[1];
+        auto T8 = v[6];
+        auto T9 = T7 - T8;
+        auto Ta = T6 + T9;
+        auto Tn = T7 + T8;
+        auto Tf = T6 - T9;
+        auto Tm = T4 + T5;
+        auto Tb = FNMS(KP707106781, Ta, T3);
+        auto Tg = FNMS(KP707106781, Tf, Te);
+        v[3] = KP1_662939224 * (FMA(KP668178637, Tg, Tb));
+        v[5] = -(KP1_662939224 * (FNMS(KP668178637, Tb, Tg)));
+        auto Tp = Tj + Tk;
+        auto Tq = Tm + Tn;
+        v[4] = KP1_414213562 * (Tp - Tq);
+        v[0] = KP1_414213562 * (Tp + Tq);
+        auto Th = FMA(KP707106781, Ta, T3);
+        auto Ti = FMA(KP707106781, Tf, Te);
+        v[1] = KP1_961570560 * (FNMS(KP198912367, Ti, Th));
+        v[7] = KP1_961570560 * (FMA(KP198912367, Th, Ti));
+        auto Tl = Tj - Tk;
+        auto To = Tm - Tn;
+        v[2] = KP1_847759065 * (FNMS(KP414213562, To, Tl));
+        v[6] = KP1_847759065 * (FMA(KP414213562, Tl, To));
+    } else {
+        float KP1_662939224 {+1.662939224605090474157576755235811513477121624};
+        float KP668178637 {+0.668178637919298919997757686523080761552472251};
+        float KP1_961570560 {+1.961570560806460898252364472268478073947867462};
+        float KP198912367 {+0.198912367379658006911597622644676228597850501};
+        float KP1_847759065 {+1.847759065022573512256366378793576573644833252};
+        float KP707106781 {+0.707106781186547524400844362104849039284835938};
+        float KP414213562 {+0.414213562373095048801688724209698078569671875};
+        float KP1_414213562 {+1.414213562373095048801688724209698078569671875};
+
+        auto T1 = v[0] * KP1_414213562;
+        auto T2 = v[4];
+        auto T3 = FMA(KP1_414213562, T2, T1);
+        auto Tj = FNMS(KP1_414213562, T2, T1);
+        auto T4 = v[2];
+        auto T5 = v[6];
+        auto T6 = FMA(KP414213562, T5, T4);
+        auto Tk = FMS(KP414213562, T4, T5);
+        auto T8 = v[1];
+        auto Td = v[7];
+        auto T9 = v[5];
+        auto Ta = v[3];
+        auto Tb = T9 + Ta;
+        auto Te = Ta - T9;
+        auto Tc = FMA(KP707106781, Tb, T8);
+        auto Tn = FNMS(KP707106781, Te, Td);
+        auto Tf = FMA(KP707106781, Te, Td);
+        auto Tm = FNMS(KP707106781, Tb, T8);
+        auto T7 = FMA(KP1_847759065, T6, T3);
+        auto Tg = FMA(KP198912367, Tf, Tc);
+        v[7] = FNMS(KP1_961570560, Tg, T7);
+        v[0] = FMA(KP1_961570560, Tg, T7);
+        auto Tp = FNMS(KP1_847759065, Tk, Tj);
+        auto Tq = FMA(KP668178637, Tm, Tn);
+        v[5] = FNMS(KP1_662939224, Tq, Tp);
+        v[2] = FMA(KP1_662939224, Tq, Tp);
+        auto Th = FNMS(KP1_847759065, T6, T3);
+        auto Ti = FNMS(KP198912367, Tc, Tf);
+        v[3] = FNMS(KP1_961570560, Ti, Th);
+        v[4] = FMA(KP1_961570560, Ti, Th);
+        auto Tl = FMA(KP1_847759065, Tk, Tj);
+        auto To = FNMS(KP668178637, Tn, Tm);
+        v[6] = FNMS(KP1_662939224, To, Tl);
+        v[1] = FMA(KP1_662939224, To, Tl);
+    }
+}
+
+// 2-D transposition
+// launched by blockDim(x=32, y=1, z=1)
+template <int stride=256, int howmany=8, int howmany_stride=32>
+__device__
+static inline void transpose_pack8_interleave4(
     float * __restrict__ data, float * __restrict__ buffer
 ) {
-    static_assert(1 <= dim && dim <= 2, "Invalid dim");
 
-    float KP1_662939224 {+1.662939224605090474157576755235811513477121624};
-    float KP668178637 {+0.668178637919298919997757686523080761552472251};
-    float KP1_961570560 {+1.961570560806460898252364472268478073947867462};
-    float KP198912367 {+0.198912367379658006911597622644676228597850501};
-    float KP1_847759065 {+1.847759065022573512256366378793576573644833252};
-    float KP707106781 {+0.707106781186547524400844362104849039284835938};
-    float KP414213562 {+0.414213562373095048801688724209698078569671875};
-    float KP1_414213562 {+1.414213562373095048801688724209698078569671875};
+    int lane_id;
+    asm("mov.u32 %0, %%laneid;" : "=r"(lane_id));
 
     #pragma unroll
     for (int iter = 0; iter < howmany; ++iter, data += howmany_stride) {
-        float v[8];
+        #pragma unroll
+        for (int i = 0; i < 8; ++i) {
+            buffer[i * smem_stride + lane_id] = data[i * stride];
+        }
+
+        __syncwarp();
 
         #pragma unroll
         for (int i = 0; i < 8; ++i) {
-            v[i] = data[i * stride];
-        }
-
-        for (int dim_iter = 0; dim_iter < dim; ++dim_iter) {
-            { // idct8
-                auto T1 = v[0] * KP1_414213562;
-                auto T2 = v[4];
-                auto T3 = FMA(KP1_414213562, T2, T1);
-                auto Tj = FNMS(KP1_414213562, T2, T1);
-                auto T4 = v[2];
-                auto T5 = v[6];
-                auto T6 = FMA(KP414213562, T5, T4);
-                auto Tk = FMS(KP414213562, T4, T5);
-                auto T8 = v[1];
-                auto Td = v[7];
-                auto T9 = v[5];
-                auto Ta = v[3];
-                auto Tb = T9 + Ta;
-                auto Te = Ta - T9;
-                auto Tc = FMA(KP707106781, Tb, T8);
-                auto Tn = FNMS(KP707106781, Te, Td);
-                auto Tf = FMA(KP707106781, Te, Td);
-                auto Tm = FNMS(KP707106781, Tb, T8);
-                auto T7 = FMA(KP1_847759065, T6, T3);
-                auto Tg = FMA(KP198912367, Tf, Tc);
-                v[7] = FNMS(KP1_961570560, Tg, T7);
-                v[0] = FMA(KP1_961570560, Tg, T7);
-                auto Tp = FNMS(KP1_847759065, Tk, Tj);
-                auto Tq = FMA(KP668178637, Tm, Tn);
-                v[5] = FNMS(KP1_662939224, Tq, Tp);
-                v[2] = FMA(KP1_662939224, Tq, Tp);
-                auto Th = FNMS(KP1_847759065, T6, T3);
-                auto Ti = FNMS(KP198912367, Tc, Tf);
-                v[3] = FNMS(KP1_961570560, Ti, Th);
-                v[4] = FMA(KP1_961570560, Ti, Th);
-                auto Tl = FMA(KP1_847759065, Tk, Tj);
-                auto To = FNMS(KP668178637, Tn, Tm);
-                v[6] = FNMS(KP1_662939224, To, Tl);
-                v[1] = FMA(KP1_662939224, To, Tl);
-            }
-
-            if (dim >= 2) // && dim_iter <= 1
-            { // transpose
-                int lane_id;
-                asm("mov.u32 %0, %%laneid;" : "=r"(lane_id));
-
-                #pragma unroll
-                for (int i = 0; i < 8; ++i) {
-                    buffer[i * smem_stride + lane_id] = v[i];
-                }
-
-                __syncwarp();
-
-                #pragma unroll
-                for (int i = 0; i < 8; ++i) {
-                    v[i] = buffer[lane_id % 8 * smem_stride + (lane_id & -8) + i];
-                }
-            }
-        }
-
-        #pragma unroll
-        for (int i = 0; i < 8; ++i) {
-            data[i * stride] = v[i];
+            data[i * stride] = buffer[(lane_id % 8) * smem_stride + (lane_id & -8) + i];
         }
     }
 }
@@ -290,19 +253,28 @@ static inline float hard_thresholding(float * data, float sigma) {
 // hard thresholding
 // launched by blockDim(x=32, y=1, z=1)
 __device__
-static inline float collaborative_dct(
+static inline float collaborative_hard(
     float * __restrict__ denoising_patch, float sigma, float * __restrict__ buffer
 ) {
+
     constexpr int stride1 = 1;
     constexpr int stride2 = stride1 * 8;
-    
-    dct_pack8_interleave4<2, stride1, 8, stride2>(denoising_patch, buffer);
-    dct_pack8_interleave4<1, stride2, 8, stride1>(denoising_patch, buffer);
+
+    #pragma unroll
+    for (int ndim = 0; ndim < 2; ++ndim) {
+        transform_pack8_interleave4<dct<true>, stride1, 8, stride2>(denoising_patch, buffer);
+        transpose_pack8_interleave4<stride1, 8, stride2>(denoising_patch, buffer);
+    }
+    transform_pack8_interleave4<dct<true>, stride2, 8, stride1>(denoising_patch, buffer);
 
     float adaptive_weight = hard_thresholding<stride1>(denoising_patch, sigma);
 
-    idct_pack8_interleave4<2, stride1, 8, stride2>(denoising_patch, buffer);
-    idct_pack8_interleave4<1, stride2, 8, stride1>(denoising_patch, buffer);
+    #pragma unroll
+    for (int ndim = 0; ndim < 2; ++ndim) {
+        transform_pack8_interleave4<dct<false>, stride1, 8, stride2>(denoising_patch, buffer);
+        transpose_pack8_interleave4<stride1, 8, stride2>(denoising_patch, buffer);
+    }
+    transform_pack8_interleave4<dct<false>, stride2, 8, stride1>(denoising_patch, buffer);
 
     return adaptive_weight;
 }
@@ -356,23 +328,36 @@ static inline float soft_thresholding(
 // soft thresholding, a.k.a. wiener filtering
 // launched by blockDim(x=32, y=1, z=1)
 __device__
-static inline float collaborative_dct(
+static inline float collaborative_soft(
     float * __restrict__ denoising_patch, float * __restrict__ ref_patch, 
     float sigma, float * __restrict__ buffer
 ) {
+
     constexpr int stride1 = 1;
     constexpr int stride2 = stride1 * 8;
-    
-    dct_pack8_interleave4<2, stride1, 8, stride2>(denoising_patch, buffer);
-    dct_pack8_interleave4<1, stride2, 8, stride1>(denoising_patch, buffer);
 
-    dct_pack8_interleave4<2, stride1, 8, stride2>(ref_patch, buffer);
-    dct_pack8_interleave4<1, stride2, 8, stride1>(ref_patch, buffer);
+    #pragma unroll
+    for (int ndim = 0; ndim < 2; ++ndim) {
+        transform_pack8_interleave4<dct<true>, stride1, 8, stride2>(denoising_patch, buffer);
+        transpose_pack8_interleave4<stride1, 8, stride2>(denoising_patch, buffer);
+    }
+    transform_pack8_interleave4<dct<true>, stride2, 8, stride1>(denoising_patch, buffer);
+
+    #pragma unroll
+    for (int ndim = 0; ndim < 2; ++ndim) {
+        transform_pack8_interleave4<dct<true>, stride1, 8, stride2>(ref_patch, buffer);
+        transpose_pack8_interleave4<stride1, 8, stride2>(ref_patch, buffer);
+    }
+    transform_pack8_interleave4<dct<true>, stride2, 8, stride1>(ref_patch, buffer);
 
     float adaptive_weight = soft_thresholding<stride1>(denoising_patch, ref_patch, sigma);
 
-    idct_pack8_interleave4<2, stride1, 8, stride2>(denoising_patch, buffer);
-    idct_pack8_interleave4<1, stride2, 8, stride1>(denoising_patch, buffer);
+    #pragma unroll
+    for (int ndim = 0; ndim < 2; ++ndim) {
+        transform_pack8_interleave4<dct<false>, stride1, 8, stride2>(denoising_patch, buffer);
+        transpose_pack8_interleave4<stride1, 8, stride2>(denoising_patch, buffer);
+    }
+    transform_pack8_interleave4<dct<false>, stride2, 8, stride1>(denoising_patch, buffer);
 
     return adaptive_weight;
 }
@@ -393,7 +378,8 @@ static void bm3d(
     int width, int height, int stride, 
     float sigma, int block_step, int bm_range, 
     int _radius, int ps_num, int ps_range, 
-    [[maybe_unused]] float sigma_u, [[maybe_unused]] float sigma_v
+    [[maybe_unused]] float sigma_u, [[maybe_unused]] float sigma_v, 
+    float extractor // used for deteriministic summation
 ) {
 
     __shared__ float buffer[8 * smem_stride];
@@ -670,7 +656,7 @@ static void bm3d(
             }
         }
 
-        float ada_weight;
+        float adaptive_weight;
         if /* constexpr */ (final_) {
             #pragma unroll
             for (int i = 0; i < 8; ++i) {
@@ -692,7 +678,7 @@ static void bm3d(
                 }
             }
 
-            ada_weight = collaborative_dct(denoising_patch, ref_patch, sigma, buffer);
+            adaptive_weight = collaborative_soft(denoising_patch, ref_patch, sigma, buffer);
         } else {
             #pragma unroll
             for (int i = 0; i < 8; ++i) {
@@ -712,7 +698,7 @@ static void bm3d(
                 }
             }
 
-            ada_weight = collaborative_dct(denoising_patch, sigma, buffer);
+            adaptive_weight = collaborative_hard(denoising_patch, sigma, buffer);
         }
 
         float * const wdstpc = &res[sub_lane_id];
@@ -735,8 +721,15 @@ static void bm3d(
 
             #pragma unroll
             for (int j = 0; j < 8; ++j) {
-                atomicAdd(&wdstp[j * stride], ada_weight * denoising_patch[i * 8 + j]);
-                atomicAdd(&weightp[j * stride], ada_weight);
+                float wdst_val = adaptive_weight * denoising_patch[i * 8 + j];
+                float weight_val = adaptive_weight;
+
+                // pre-rounding
+                wdst_val = (wdst_val + extractor) - extractor;
+                weight_val = (weight_val + extractor) - extractor;
+
+                atomicAdd(&wdstp[j * stride], wdst_val);
+                atomicAdd(&weightp[j * stride], weight_val);
             }
         }
 
@@ -750,7 +743,8 @@ cudaGraphExec_t get_graphexec(
     int width, int height, int stride, 
     float sigma, int block_step, int bm_range, 
     int radius, int ps_num, int ps_range, 
-    bool chroma, float sigma_u, float sigma_v, bool final_
+    bool chroma, float sigma_u, float sigma_v, bool final_, 
+    float extractor
 ) noexcept {
 
     size_t pitch { stride * sizeof(float) };
@@ -796,7 +790,8 @@ cudaGraphExec_t get_graphexec(
             &width, &height, &stride, 
             &sigma, &block_step, &bm_range, 
             &radius, &ps_num, &ps_range, 
-            &sigma_u, &sigma_v};
+            &sigma_u, &sigma_v, &extractor
+        };
 
         cudaKernelNodeParams kernel_params {};
 

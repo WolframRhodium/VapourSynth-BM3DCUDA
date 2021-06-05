@@ -23,7 +23,7 @@ The `_rtc` version compiles GPU code at runtime, which might runs faster at the 
 ## Parameters
 
 ```python3
-bm3dcuda[_rtc].BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_step=8, int[] bm_range=9, int radius=0, int[] ps_num=2, int[] ps_range=4, bint chroma=False, int device_id=0, bool fast=True])
+bm3dcuda[_rtc].BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_step=8, int[] bm_range=9, int radius=0, int[] ps_num=2, int[] ps_range=4, bint chroma=False, int device_id=0, bool fast=True, int extractor_exp=0])
 ```
 
 - clip:<br />
@@ -55,6 +55,21 @@ bm3dcuda[_rtc].BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_st
 - fast:<br />
     Multi-threaded copy between CPU and GPU at the expense of 4x memory consumption.<br />
     Default `True`.
+
+- extractor_exp: <br />
+    Used for deterministic (bitwise) output.<br />
+    The value should be a positive integer not less than 3, and may need to be higher depending on the source video and filter parameters.<br />
+    Default `0`. (non-determinism)
+
+---
+
+The `_rtc` version also has two experimental parameters:
+
+- transform_2d_s/transform_1d_s: (string)
+    Specify type of transform.<br />
+    Currently implemented transforms: `DCT`, `Haar`, `WHT`, `Bior1.5`.<br />
+    Default `DCT`.<br />
+    This feature is not implemented in the standard version due to performance and binary size concerns.
 
 ## Notes
 

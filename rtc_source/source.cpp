@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <concepts>
 #include <cstdint>
 #include <ios>
@@ -171,7 +172,7 @@ struct BM3DData {
     bool final_;
     std::string transform_2d_s[3];
     std::string transform_1d_s[3];
-    int extractor;
+    int extractor_exp;
 
     int d_pitch;
 
@@ -191,13 +192,15 @@ static std::variant<CUmodule, std::string> compile(
     bool final_, 
     const std::string & transform_2d_s, 
     const std::string & transform_1d_s, 
-    int extractor, 
+    int extractor_exp, 
     CUdevice device
 ) noexcept {
 
     const auto set_error = [](const std::string & error_message) {
         return error_message;
     };
+
+    float extractor { extractor_exp ? std::ldexpf(1.0f, extractor_exp) : 0.f };
 
     std::ostringstream kernel_source_io;
     kernel_source_io
@@ -219,7 +222,7 @@ static std::variant<CUmodule, std::string> compile(
         << "__device__ static const bool temporal = " << (radius > 0) << ";\n"
         << "__device__ static const bool chroma = " << chroma << ";\n"
         << "__device__ static const bool final_ = " << final_ << ";\n"
-        << "__device__ static const float extractor = static_cast<float>(" << extractor << ");\n"
+        << "__device__ static const float extractor = " << extractor << ";\n"
         << "__device__ static const float FLT_MAX = " 
             << std::numeric_limits<float>::max() << ";\n"
         << "__device__ static const float FLT_EPSILON = " 
@@ -858,14 +861,14 @@ static void VS_CC BM3DCreate(
         d->transform_1d_s[i] = std::move(temp);
     }
 
-    const int extractor = [&](){
-        int temp = int64ToIntS(vsapi->propGetInt(in, "extractor", 0, &error));
+    const int extractor_exp = [&](){
+        int temp = int64ToIntS(vsapi->propGetInt(in, "extractor_exp", 0, &error));
         if (error) {
             return 0;
         }
         return temp;
     }();
-    d->extractor = extractor;
+    d->extractor_exp = extractor_exp;
 
     d->semaphore.current.store(num_copy_engines - 1, std::memory_order::relaxed);
     d->locks = std::make_unique<std::atomic_flag[]>(num_copy_engines);
@@ -958,7 +961,7 @@ static void VS_CC BM3DCreate(
                         radius, ps_num[0], ps_range[0], 
                         true, sigma[1], sigma[2], 
                         final_, d->transform_2d_s[i], d->transform_1d_s[i], 
-                        d->extractor, 
+                        d->extractor_exp, 
                         device
                     );
 
@@ -999,7 +1002,7 @@ static void VS_CC BM3DCreate(
                                 radius, ps_num[plane], ps_range[plane], 
                                 false, 0.0f, 0.0f, final_, 
                                 d->transform_2d_s[i], d->transform_1d_s[i], 
-                                d->extractor, 
+                                d->extractor_exp, 
                                 device
                             );
 
@@ -1072,9 +1075,9 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
         "chroma:int:opt;"
         "device_id:int:opt;"
         "fast:int:opt;"
+        "extractor_exp:int:opt;"
         "transform_2d_s:data[]:opt;"
-        "transform_1d_s:data[]:opt;"
-        "extractor:int:opt;",
+        "transform_1d_s:data[]:opt;",
         BM3DCreate, nullptr, plugin
     );
 }
