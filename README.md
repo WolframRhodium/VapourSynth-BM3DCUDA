@@ -61,19 +61,18 @@ bm3dcuda[_rtc].BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_st
     The value should be a positive integer not less than 3, and may need to be higher depending on the source video and filter parameters.<br />
     Default `0`. (non-determinism)
 
----
-
-The `_rtc` version also has two experimental parameters:
-
-- transform_2d_s/transform_1d_s: (string)
-    Specify type of transform.<br />
-    Currently implemented transforms: `DCT`, `Haar`, `WHT`, `Bior1.5`.<br />
-    Default `DCT`.<br />
-    This feature is not implemented in the standard version due to performance and binary size concerns.
-
 ## Notes
 
 - `bm3d.VAggregate` should be called after temporal filtering, as in `VapourSynth-BM3D`.
+
+- The `_rtc` version also has two experimental parameters:
+
+    - transform_2d_s/transform_1d_s: (string)<br />
+        Specify type of transform.<br />
+        Currently implemented transforms: `DCT`, `Haar`, `WHT`, `Bior1.5`.<br />
+        Default `DCT`.<br />
+        <br />
+        This feature is not implemented in the standard version due to performance and binary size concerns.
 
 ## Statistics
 
@@ -99,5 +98,5 @@ g++-11 source.cpp kernel.o -o libbm3dcuda.so -shared -fPIC -I/usr/local/cuda-11.
 ```
 cd rtc_source
 
-g++-11 source.cpp -o libbm3drtc.so -shared -fPIC -I /usr/local/cuda-11.3/include -I /usr/local/include -L /usr/local/cuda-11.3/lib64 -lnvrtc -lcuda -Wl,-rpath,/usr/local/cuda-11.3/lib64 --std=c++20 -march=native -O3
+g++-11 source.cpp -o libbm3dcuda_rtc.so -shared -fPIC -I /usr/local/cuda-11.3/include -I /usr/local/include -L /usr/local/cuda-11.3/lib64 -lnvrtc -lcuda -Wl,-rpath,/usr/local/cuda-11.3/lib64 --std=c++20 -march=native -O3
 ```
