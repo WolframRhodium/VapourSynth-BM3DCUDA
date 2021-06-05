@@ -146,13 +146,13 @@ struct BM3DData {
     // int bm_range[3];
     // int ps_num[3];
     // int ps_range[3];
+    // float extractor;
 
     int radius;
     int num_copy_engines; // fast
     bool chroma;
     bool process[3]; // sigma != 0
     bool final_;
-    int extractor_exp;
 
     int d_pitch;
     int device_id;
@@ -609,14 +609,13 @@ static void VS_CC BM3DCreate(
     const int num_copy_engines { fast ? kFast : 1 }; 
     d->num_copy_engines = num_copy_engines;
 
-    const int extractor_exp = [&](){
+    const float extractor = [&](){
         int temp = int64ToIntS(vsapi->propGetInt(in, "extractor_exp", 0, &error));
         if (error) {
-            return 0;
+            return 0.0f;
         }
-        return temp;
+        return (temp ? std::ldexp(1.0f, temp) : 0.0f);
     }();
-    d->extractor_exp = extractor_exp;
 
     // GPU resource allocation
     {
@@ -662,7 +661,6 @@ static void VS_CC BM3DCreate(
                 cudaStreamNonBlocking));
             Resource<cudaStream_t, cudaStreamDestroy> stream { stream_ };
 
-            float extractor { d->extractor_exp ? std::ldexpf(1.0f, d->extractor_exp) : 0.f };
             cudaGraphExec_t graphexecs[3] {};
             if (d->chroma) {
                 graphexecs[0] = get_graphexec(

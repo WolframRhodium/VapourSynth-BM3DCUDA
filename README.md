@@ -58,6 +58,7 @@ bm3dcuda[_rtc].BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_st
 
 - extractor_exp: <br />
     Used for deterministic (bitwise) output.<br />
+    [Pre-rounding](https://ieeexplore.ieee.org/document/6545904) is employed for associative floating-point summation.
     The value should be a positive integer not less than 3, and may need to be higher depending on the source video and filter parameters.<br />
     Default `0`. (non-determinism)
 

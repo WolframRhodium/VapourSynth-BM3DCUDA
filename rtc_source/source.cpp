@@ -164,6 +164,7 @@ struct BM3DData {
     // int bm_range[3];
     // int ps_num[3];
     // int ps_range[3];
+    // float extractor
 
     int radius;
     int num_copy_engines; // fast
@@ -172,7 +173,6 @@ struct BM3DData {
     bool final_;
     std::string transform_2d_s[3];
     std::string transform_1d_s[3];
-    int extractor_exp;
 
     int d_pitch;
 
@@ -192,15 +192,13 @@ static std::variant<CUmodule, std::string> compile(
     bool final_, 
     const std::string & transform_2d_s, 
     const std::string & transform_1d_s, 
-    int extractor_exp, 
+    float extractor, 
     CUdevice device
 ) noexcept {
 
     const auto set_error = [](const std::string & error_message) {
         return error_message;
     };
-
-    float extractor { extractor_exp ? std::ldexpf(1.0f, extractor_exp) : 0.f };
 
     std::ostringstream kernel_source_io;
     kernel_source_io
@@ -861,14 +859,13 @@ static void VS_CC BM3DCreate(
         d->transform_1d_s[i] = std::move(temp);
     }
 
-    const int extractor_exp = [&](){
+    const float extractor = [&](){
         int temp = int64ToIntS(vsapi->propGetInt(in, "extractor_exp", 0, &error));
         if (error) {
-            return 0;
+            return 0.0f;
         }
-        return temp;
+        return (temp ? std::ldexp(1.0f, temp) : 0.0f);
     }();
-    d->extractor_exp = extractor_exp;
 
     d->semaphore.current.store(num_copy_engines - 1, std::memory_order::relaxed);
     d->locks = std::make_unique<std::atomic_flag[]>(num_copy_engines);
@@ -961,7 +958,7 @@ static void VS_CC BM3DCreate(
                         radius, ps_num[0], ps_range[0], 
                         true, sigma[1], sigma[2], 
                         final_, d->transform_2d_s[i], d->transform_1d_s[i], 
-                        d->extractor_exp, 
+                        extractor, 
                         device
                     );
 
@@ -1002,7 +999,7 @@ static void VS_CC BM3DCreate(
                                 radius, ps_num[plane], ps_range[plane], 
                                 false, 0.0f, 0.0f, final_, 
                                 d->transform_2d_s[i], d->transform_1d_s[i], 
-                                d->extractor_exp, 
+                                extractor, 
                                 device
                             );
 
