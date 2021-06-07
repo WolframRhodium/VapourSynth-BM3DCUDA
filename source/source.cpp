@@ -246,21 +246,14 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         vsapi->freeFrame
                     );
                 }
-                for (int i = -radius; i <= radius; ++i) {
-                    int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
-                    temp.emplace_back(
-                        vsapi->getFrameFilter(clamped_n, d->node, frameCtx), 
-                        vsapi->freeFrame
-                    );
-                }
-            } else {
-                for (int i = -radius; i <= radius; ++i) {
-                    int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
-                    temp.emplace_back(
-                        vsapi->getFrameFilter(clamped_n, d->node, frameCtx), 
-                        vsapi->freeFrame
-                    );
-                }
+            }
+
+            for (int i = -radius; i <= radius; ++i) {
+                int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
+                temp.emplace_back(
+                    vsapi->getFrameFilter(clamped_n, d->node, frameCtx), 
+                    vsapi->freeFrame
+                );
             }
 
             return temp;

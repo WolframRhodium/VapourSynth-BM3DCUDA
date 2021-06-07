@@ -372,7 +372,6 @@ static inline void transpose_pack8_interleave4(
     }
 }
 
-// hard thresholding
 // launched by blockDim(x=32, y=1, z=1)
 template <int stride=32>
 __device__
@@ -449,11 +448,10 @@ static inline float collaborative_hard(
     return adaptive_weight;
 }
 
-// soft thresholding, a.k.a. wiener filtering
 // launched by blockDim(x=32, y=1, z=1)
 template <int stride=32>
 __device__
-static inline float soft_thresholding(
+static inline float wiener_filtering(
     float * __restrict__ data, float * __restrict__ ref, float sigma
 ) {
     int lane_id;
@@ -495,10 +493,10 @@ static inline float soft_thresholding(
     return 1.0f / k;
 }
 
-// soft thresholding, a.k.a. wiener filtering
+// wiener filtering
 // launched by blockDim(x=32, y=1, z=1)
 __device__
-static inline float collaborative_soft(
+static inline float collaborative_wiener(
     float * __restrict__ denoising_patch, float * __restrict__ ref_patch, 
     float sigma, float * __restrict__ buffer
 ) {
@@ -520,7 +518,7 @@ static inline float collaborative_soft(
     }
     transform_pack8_interleave4<transform_1d<true>, stride2, 8, stride1>(ref_patch, buffer);
 
-    float adaptive_weight = soft_thresholding<stride1>(denoising_patch, ref_patch, sigma);
+    float adaptive_weight = wiener_filtering<stride1>(denoising_patch, ref_patch, sigma);
 
     #pragma unroll
     for (int ndim = 0; ndim < 2; ++ndim) {
@@ -847,7 +845,7 @@ void bm3d(
                 }
             }
 
-            adaptive_weight = collaborative_soft(denoising_patch, ref_patch, sigma, buffer);
+            adaptive_weight = collaborative_wiener(denoising_patch, ref_patch, sigma, buffer);
         } else {
             #pragma unroll
             for (int i = 0; i < 8; ++i) {
