@@ -1,12 +1,18 @@
 # VapourSynth-BM3DCUDA
 
+Copyright© 2003, 2007-14 Matteo Frigo
+
+Copyright© 2003, 2007-14 Massachusetts Institute of Technology
+
 Copyright© 2021 WolframRhodium
 
-BM3D denoising filter for VapourSynth, implemented in CUDA
+BM3D denoising filter for VapourSynth, implemented in CUDA.
 
 ## Description
 
-Please check [VapourSynth-BM3D](https://github.com/HomeOfVapourSynthEvolution/VapourSynth-BM3D).
+- Please check [VapourSynth-BM3D](https://github.com/HomeOfVapourSynthEvolution/VapourSynth-BM3D).
+
+- The `_rtc` version compiles GPU code at runtime, which might runs faster than standard version at the cost of a slight overhead.
 
 ## Requirements
 
@@ -18,7 +24,7 @@ Please check [VapourSynth-BM3D](https://github.com/HomeOfVapourSynthEvolution/Va
 
 The minimum requirement on compute capability is 3.5, which requires manual compilation (specifying nvcc flag `-gencode arch=compute_35,code=sm_35`).
 
-The `_rtc` version compiles GPU code at runtime, which might runs faster at the cost of slight overhead. It requires compute capability 3.5 or higher, GPU driver 465 or newer and has dependencies on `nvrtc64_112_0.dll/libnvrtc.so.11.2` and `nvrtc-builtins64_113.dll/libnvrtc-builtins.so.11.3.109`.
+The `_rtc` version requires compute capability 3.5 or higher, GPU driver 465 or newer and has dependencies on `nvrtc64_112_0.dll/libnvrtc.so.11.2` and `nvrtc-builtins64_113.dll/libnvrtc-builtins.so.11.3.109`.
 
 ## Parameters
 
@@ -26,40 +32,59 @@ The `_rtc` version compiles GPU code at runtime, which might runs faster at the 
 bm3dcuda[_rtc].BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_step=8, int[] bm_range=9, int radius=0, int[] ps_num=2, int[] ps_range=4, bint chroma=False, int device_id=0, bool fast=True, int extractor_exp=0])
 ```
 
-- clip:<br />
+- clip:
+
     The input clip. Must be of 32 bit float format. Each plane is denoised separately if `chroma` is set to `False`.
 
-- ref:<br />
-    The reference clip. Must be of the same format, width, height, number of frames as `clip`.<br />
-    Used in block-matching and as the reference in empirical Wiener filtering, i.e. `bm3d.Final / bm3d.VFinal`.
+- ref:
 
-- sigma:<br />
-    The strength of denoising for each plane.<br />
-    The strength is similar (but not strictly equal) as `VapourSynth-BM3D` due to differences in implementation. (coefficient normalization is not implemented, for example)<br />
+    The reference clip. Must be of the same format, width, height, number of frames as `clip`.
+
+    Used in block-matching and as the reference in empirical Wiener filtering, i.e. `bm3d.Final` / `bm3d.VFinal`.
+
+- sigma:
+    The strength of denoising for each plane.
+
+    The strength is similar (but not strictly equal) as `VapourSynth-BM3D` due to differences in implementation. (coefficient normalization is not implemented, for example)
+
     Default `[3,3,3]`.
 
-- block_step, bm_range, radius, ps_num, ps_range:<br />
-    Same as those in `VapourSynth-BM3D`.<br />
-    If `chroma` is set to `True`, only the first value is in effect.<br />
-    Otherwise an array of values may be specified for each plane.
+- block_step, bm_range, radius, ps_num, ps_range:
 
-- chroma:<br />
-    CBM3D algorithm. `clip` must be of `YUV444PS` format.<br />
+    Same as those in `VapourSynth-BM3D`.
+
+    If `chroma` is set to `True`, only the first value is in effect.
+
+    Otherwise an array of values may be specified for each plane (except `radius`)`.
+
+- chroma:
+
+    CBM3D algorithm. `clip` must be of `YUV444PS` format.
+
     Y channel is used in block-matching of chroma channels.
+
     Default `False`.
 
-- device_id:<br />
-    Set GPU to be used.<br />
+- device_id:
+
+    Set GPU to be used.
+
     Default `0`.
 
-- fast:<br />
-    Multi-threaded copy between CPU and GPU at the expense of 4x memory consumption.<br />
+- fast:
+
+    Multi-threaded copy between CPU and GPU at the expense of 4x memory consumption.
+
     Default `True`.
 
-- extractor_exp: <br />
-    Used for deterministic (bitwise) output.<br />
+- extractor_exp:
+
+    Used for deterministic (bitwise) output.
+
     [Pre-rounding](https://ieeexplore.ieee.org/document/6545904) is employed for associative floating-point summation.
-    The value should be a positive integer not less than 3, and may need to be higher depending on the source video and filter parameters.<br />
+
+    The value should be a positive integer not less than 3, and may need to be higher depending on the source video and filter parameters.
+
     Default `0`. (non-determinism)
 
 ## Notes
@@ -68,16 +93,20 @@ bm3dcuda[_rtc].BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_st
 
 - The `_rtc` version has two experimental parameters:
 
-    - transform_2d_s/transform_1d_s: (string)<br />
-        Specify type of transform.<br />
-        Currently implemented transforms: `DCT`, `Haar`, `WHT`, `Bior1.5`.<br />
-        Default `DCT`.<br />
+    - transform_2d_s/transform_1d_s: (string)
+
+        Specify type of transform.
+
+        Currently implemented transforms: `DCT`, `Haar`, `WHT`, `Bior1.5`.
+
+        Default `DCT`.
 
     This feature is not implemented in the standard version due to performance and binary size concerns.
 
 ## Statistics
 
-GPU memory consumptions:<br />
+GPU memory consumptions:
+
 `(ref ? 4 : 3) * (chroma ? 3 : 1) * (fast ? 4 : 1) * (2 * radius + 1) * size_of_a_single_frame`
 
 ## Compilation on Linux
