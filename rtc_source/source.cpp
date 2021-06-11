@@ -824,7 +824,10 @@ static void VS_CC BM3DCreate(
         if (error) {
             temp = (i == 0) ? "dct" : d->transform_2d_s[i - 1];
         } else {
-            std::for_each(temp.begin(), temp.end(), [](char & c){c = std::tolower(c);});
+            std::transform(
+                temp.begin(), temp.end(), temp.begin(), 
+                [](unsigned char c){ return std::tolower(c); }
+            );
             if (temp != "dct" && temp != "haar" && temp != "wht" && temp != "bior1.5") {
                 return set_error("invalid \'transform_2d_s\': " + temp);
             }

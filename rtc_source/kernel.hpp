@@ -470,7 +470,7 @@ static inline float wiener_filtering(
         auto ref_val = ref[i * stride];
         float coeff = (ref_val * ref_val) / (ref_val * ref_val + sigma * sigma);
         if (i == 0) {
-            coeff = (lane_id % 8) ? coeff : 1.f; // protects DC component
+            coeff = (lane_id % 8) ? coeff : 1.0f; // protects DC component
         }
         val *= coeff;
         #if __CUDA_ARCH__ == 750 || __CUDA_ARCH__ == 860
@@ -478,7 +478,7 @@ static inline float wiener_filtering(
         #else
         k += coeff * coeff;
         #endif
-        data[i * stride] = val * (1.0f / 4096.f);
+        data[i * stride] = val * (1.0f / 4096.0f);
     }
 
     #if __CUDA_ARCH__ == 750 || __CUDA_ARCH__ == 860
@@ -691,7 +691,7 @@ void bm3d(
                     for (int row_i = top; row_i <= bottom; ++row_i) {
                         const float * srcp_col = srcp_row;
                         for (int col_i = left; col_i <= right; ++col_i) {
-                            float errors[2] {0.f};
+                            float errors[2] { 0.0f };
 
                             const float * srcp = srcp_col;
 
