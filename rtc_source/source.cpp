@@ -171,6 +171,7 @@ struct BM3DData {
     bool chroma;
     bool process[3]; // sigma != 0
     bool final_;
+    std::string bm_error_s[3];
     std::string transform_2d_s[3];
     std::string transform_1d_s[3];
 
@@ -190,6 +191,7 @@ static std::variant<CUmodule, std::string> compile(
     int radius, int ps_num, int ps_range, 
     bool chroma, float sigma_u, float sigma_v, 
     bool final_, 
+    const std::string & bm_error_s, 
     const std::string & transform_2d_s, 
     const std::string & transform_1d_s, 
     float extractor, 
@@ -205,6 +207,7 @@ static std::variant<CUmodule, std::string> compile(
         << kernel_header_template
         << "#define transform_2d " << transform_2d_s << "\n"
         << "#define transform_1d " << transform_1d_s << "\n"
+        << "#define bm_error " << bm_error_s << "\n"
         << std::hexfloat << std::boolalpha
         << "__device__ static const int width = " << width << ";\n"
         << "__device__ static const int height = " << height << ";\n"
@@ -403,7 +406,7 @@ static inline void Aggregation(
     const float * wdst = h_res;
     const float * weight = &h_res[height * d_stride];
 
-    for (auto y = 0; y < height; ++y) {
+    for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             dstp[x] = wdst[x] / weight[x];
         }
@@ -818,16 +821,33 @@ static void VS_CC BM3DCreate(
     const int num_copy_engines { fast ? kFast : 1 }; 
     d->num_copy_engines = num_copy_engines;
 
+    for (int i = 0; i < std::ssize(d->bm_error_s); ++i) {
+        auto _temp = vsapi->propGetData(in, "bm_error_s", i, &error);
+        auto temp = std::string{ _temp ? _temp : "" };
+        if (error) {
+            temp = (i == 0) ? "ssd" : d->bm_error_s[i - 1];
+        } else {
+            std::transform(
+                temp.begin(), temp.end(), temp.begin(), 
+                [](unsigned char c){ return std::tolower(c); }
+            );
+            if (
+                temp != "ssd" && temp != "sad" && 
+                temp != "zssd" && temp != "zsad" && 
+                temp != "ssd_norm") {
+                return set_error("invalid \'bm_error_s\': "  + temp);
+            }
+        }
+        d->bm_error_s[i] = std::move(temp);
+    }
+
     for (int i = 0; i < std::ssize(d->transform_2d_s); ++i) {
         auto _temp = vsapi->propGetData(in, "transform_2d_s", i, &error);
         auto temp = std::string{ _temp ? _temp : "" };
         if (error) {
             temp = (i == 0) ? "dct" : d->transform_2d_s[i - 1];
         } else {
-            std::transform(
-                temp.begin(), temp.end(), temp.begin(), 
-                [](unsigned char c){ return std::tolower(c); }
-            );
+            std::for_each(temp.begin(), temp.end(), [](char & c){c = std::tolower(c);});
             if (temp != "dct" && temp != "haar" && temp != "wht" && temp != "bior1.5") {
                 return set_error("invalid \'transform_2d_s\': " + temp);
             }
@@ -844,7 +864,10 @@ static void VS_CC BM3DCreate(
         if (error) {
             temp = (i == 0) ? "dct" : d->transform_1d_s[i - 1];
         } else {
-            std::for_each(temp.begin(), temp.end(), [](char & c){c = std::tolower(c);});
+            std::transform(
+                temp.begin(), temp.end(), temp.begin(), 
+                [](unsigned char c){ return std::tolower(c); }
+            );
             if (temp != "dct" && temp != "haar" && temp != "wht" && temp != "bior1.5") {
                 return set_error("invalid \'transform_1d_s\': "  + temp);
             }
@@ -953,7 +976,9 @@ static void VS_CC BM3DCreate(
                         sigma[0], block_step[0], bm_range[0], 
                         radius, ps_num[0], ps_range[0], 
                         true, sigma[1], sigma[2], 
-                        final_, d->transform_2d_s[i], d->transform_1d_s[i], 
+                        final_, 
+                        d->bm_error_s[0], 
+                        d->transform_2d_s[0], d->transform_1d_s[0], 
                         extractor, 
                         device
                     );
@@ -994,7 +1019,8 @@ static void VS_CC BM3DCreate(
                                 sigma[plane], block_step[plane], bm_range[plane], 
                                 radius, ps_num[plane], ps_range[plane], 
                                 false, 0.0f, 0.0f, final_, 
-                                d->transform_2d_s[i], d->transform_1d_s[i], 
+                                d->bm_error_s[plane], 
+                                d->transform_2d_s[plane], d->transform_1d_s[plane], 
                                 extractor, 
                                 device
                             );
@@ -1069,6 +1095,7 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
         "device_id:int:opt;"
         "fast:int:opt;"
         "extractor_exp:int:opt;"
+        "bm_error_s:data[]:opt;"
         "transform_2d_s:data[]:opt;"
         "transform_1d_s:data[]:opt;",
         BM3DCreate, nullptr, plugin

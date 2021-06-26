@@ -39,6 +39,21 @@ static inline void wht(float [8]);
 template <bool forward>
 __device__
 static inline void bior1_5(float [8]);
+
+__device__
+static inline float ssd(const float [8], const float [8], unsigned int);
+
+__device__
+static inline float sad(const float [8], const float [8], unsigned int);
+
+__device__
+static inline float zssd(const float [8], const float [8], unsigned int);
+
+__device__
+static inline float zsad(const float [8], const float [8], unsigned int);
+
+__device__
+static inline float ssd_norm(const float [8], const float [8], unsigned int);
 )""";
 
 const auto kernel_source_template = R"""(
@@ -50,9 +65,10 @@ external variables:
     float sigma_u, float sigma_v, 
     bool temporal, bool chroma, bool final_
     float FLT_MAX, float FLT_EPSILON, 
+    float extractor, 
+    __device__ static inline float bm_error(const float *, const float *)
     template<bool> __device__ static inline void transform_2d(float [8]), 
     template<bool> __device__ static inline void transform_1d(float [8]), 
-    float extractor
 */
 
 #define FMA(a, b, c) (((a) * (b)) + (c))
@@ -344,6 +360,149 @@ static inline void bior1_5(float v[8]) {
     }
 }
 )""" R"""(
+__device__ 
+static inline float reduce_subwarp(float x, unsigned int mask) {
+    x += __shfl_xor_sync(mask, x, 1, 8);
+    x += __shfl_xor_sync(mask, x, 2, 8);
+    x += __shfl_xor_sync(mask, x, 4, 8);
+
+    return x;
+}
+
+__device__
+static inline float ssd(
+    const float center[__restrict__ 8], 
+    const float neighbor[__restrict__ 8], 
+    unsigned int mask
+) {
+    float errors[2] { 0.0f };
+
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) {
+        float val = center[i] - neighbor[i];
+        errors[i % 2] += val * val;
+    }
+
+    float error = errors[0] + errors[1];
+
+    return reduce_subwarp(error, mask);
+}
+
+__device__
+static inline float sad(
+    const float center[__restrict__ 8], 
+    const float neighbor[__restrict__ 8], 
+    unsigned int mask
+) {
+    float errors[2] { 0.0f };
+
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) {
+        float val = center[i] - neighbor[i];
+        errors[i % 2] += fabsf(val);
+    }
+
+    float error = errors[0] + errors[1];
+
+    return reduce_subwarp(error, mask);
+}
+
+__device__
+static inline float zssd(
+    const float center[__restrict__ 8], 
+    const float neighbor[__restrict__ 8], 
+    unsigned int mask
+) {
+
+    float center_sum = (
+        ((center[0] + center[1]) + (center[2] + center[3])) + 
+        ((center[4] + center[5]) + (center[6] + center[7])));
+    float center_mean = reduce_subwarp(center_sum, mask) * (1.0f / 64.f);
+
+    float neighbor_sum = (
+        ((neighbor[0] + neighbor[1]) + (neighbor[2] + neighbor[3])) + 
+        ((neighbor[4] + neighbor[5]) + (neighbor[6] + neighbor[7])));
+    float neighbor_mean = reduce_subwarp(neighbor_sum, mask) * (1.0f / 64.f);
+
+    float errors[2] { 0.0f };
+
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) {
+        float val = center[i] - neighbor[i] - (center_mean - neighbor_mean);
+        errors[i % 2] += val * val;
+    }
+
+    float error = errors[0] + errors[1];
+
+    return reduce_subwarp(error, mask);
+}
+
+__device__
+static inline float zsad(
+    const float center[__restrict__ 8], 
+    const float neighbor[__restrict__ 8], 
+    unsigned int mask
+) {
+
+    float center_sum = (
+        ((center[0] + center[1]) + (center[2] + center[3])) + 
+        ((center[4] + center[5]) + (center[6] + center[7])));
+    float center_mean = reduce_subwarp(center_sum, mask) * (1.0f / 64.f);
+
+    float neighbor_sum = (
+        ((neighbor[0] + neighbor[1]) + (neighbor[2] + neighbor[3])) + 
+        ((neighbor[4] + neighbor[5]) + (neighbor[6] + neighbor[7])));
+    float neighbor_mean = reduce_subwarp(neighbor_sum, mask) * (1.0f / 64.f);
+
+    float errors[2] { 0.0f };
+
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) {
+        float val = center[i] - neighbor[i] - (center_mean - neighbor_mean);
+        errors[i % 2] += fabsf(val);
+    }
+
+    float error = errors[0] + errors[1];
+
+    return reduce_subwarp(error, mask);
+}
+
+__device__
+static inline float ssd_norm(
+    const float center[__restrict__ 8], 
+    const float neighbor[__restrict__ 8], 
+    unsigned int mask
+) {
+
+    float center_ssds[2] {};
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) {
+        center_ssds[i % 2] += center[i] * center[i];
+    }
+    float center_ssd = center_ssds[0] + center_ssds[1];
+    float center_norm = sqrtf(reduce_subwarp(center_ssd, mask));
+
+    float neighbor_ssds[2] {};
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) {
+        neighbor_ssds[i % 2] += neighbor[i] * neighbor[i];
+    }
+    float neighbor_ssd = neighbor_ssds[0] + neighbor_ssds[1];
+    float neighbor_norm = sqrtf(reduce_subwarp(neighbor_ssd, mask));
+
+    float errors[2] { 0.0f };
+
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) {
+        float val = center[i] * neighbor[i];
+        errors[i % 2] += val;
+    }
+
+    float error = errors[0] + errors[1];
+
+    return 2.0f - 2.0f * reduce_subwarp(error, mask) / (center_norm * neighbor_norm + FLT_EPSILON);
+}
+)""" R"""(
 // 2-D transposition
 // launched by blockDim(x=32, y=1, z=1)
 template <int stride=256, int howmany=8, int howmany_stride=32>
@@ -410,10 +569,7 @@ static inline float hard_thresholding(float * data, float sigma) {
     float k { (ks[0] + ks[1]) + (ks[2] + ks[3]) };
     #endif
 
-    #pragma unroll
-    for (int i = 4; i >= 1; i /= 2) {
-        k += __shfl_xor_sync(0xFFFFFFFF, k, i, 8);
-    }
+    k = reduce_subwarp(k, 0xFFFFFFFF);
 
     return 1.0f / k;
 }
@@ -484,10 +640,7 @@ static inline float wiener_filtering(
     float k { (ks[0] + ks[1]) + (ks[2] + ks[3]) };
     #endif
 
-    #pragma unroll
-    for (int i = 4; i >= 1; i /= 2) {
-        k += __shfl_xor_sync(0xFFFFFFFF, k, i, 8);
-    }
+    k = reduce_subwarp(k, 0xFFFFFFFF);
 
     return 1.0f / k;
 }
@@ -603,27 +756,20 @@ void bm3d(
         for (int row_i = top; row_i <= bottom; ++row_i) {
             const float * srcp_col = srcp_row;
             for (int col_i = left; col_i <= right; ++col_i) {
-                float errors[2] { 0.0f };
-
-                const float * srcp = srcp_col;
-
-                #pragma unroll
-                for (int i = 0; i < 8; ++i) {
-                    float val = current_patch[i] - srcp[i * stride];
-                    errors[i % 2] += val * val;
-                }
-
-                float error = errors[0] + errors[1];
-
                 #if __CUDA_ARCH__ >= 700
                 auto active_mask = membermask;
                 #else
                 auto active_mask = __activemask(); // lock-step execution
                 #endif
+                
+                float neighbor_patch[8];
 
-                error += __shfl_xor_sync(active_mask, error, 1, 8);
-                error += __shfl_xor_sync(active_mask, error, 2, 8);
-                error += __shfl_xor_sync(active_mask, error, 4, 8);
+                #pragma unroll
+                for (int i = 0; i < 8; ++i) {
+                    neighbor_patch[i] = srcp_col[i * stride];
+                }
+
+                float error = bm_error(current_patch, neighbor_patch, active_mask);
 
                 auto pre_error = __shfl_up_sync(active_mask, errors8, 1, 8);
                 int pre_index_x = __shfl_up_sync(active_mask, index8_x, 1, 8);
@@ -690,27 +836,20 @@ void bm3d(
                     for (int row_i = top; row_i <= bottom; ++row_i) {
                         const float * srcp_col = srcp_row;
                         for (int col_i = left; col_i <= right; ++col_i) {
-                            float errors[2] { 0.0f };
-
-                            const float * srcp = srcp_col;
-
-                            #pragma unroll
-                            for (int j = 0; j < 8; ++j) {
-                                float val = current_patch[j] - srcp[j * stride];
-                                errors[j % 2] += val * val;
-                            }
-
-                            float error = errors[0] + errors[1];
-
                             #if __CUDA_ARCH__ >= 700
                             auto active_mask = membermask;
                             #else
                             auto active_mask = __activemask(); // lock-step execution
                             #endif
 
-                            error += __shfl_xor_sync(active_mask, error, 1, 8);
-                            error += __shfl_xor_sync(active_mask, error, 2, 8);
-                            error += __shfl_xor_sync(active_mask, error, 4, 8);
+                            float neighbor_patch[8];
+
+                            #pragma unroll
+                            for (int i = 0; i < 8; ++i) {
+                                neighbor_patch[i] = srcp_col[i * stride];
+                            }
+
+                            float error = bm_error(current_patch, neighbor_patch, active_mask);
 
                             float pre_error = __shfl_up_sync(
                                 active_mask, frame_errors8, 1, 8);

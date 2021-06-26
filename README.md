@@ -55,7 +55,7 @@ bm3dcuda[_rtc].BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_st
 
     If `chroma` is set to `True`, only the first value is in effect.
 
-    Otherwise an array of values may be specified for each plane (except `radius`)`.
+    Otherwise an array of values may be specified for each plane (except `radius`).
 
 - chroma:
 
@@ -91,7 +91,15 @@ bm3dcuda[_rtc].BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_st
 
 - `bm3d.VAggregate` should be called after temporal filtering, as in `VapourSynth-BM3D`.
 
-- The `_rtc` version has two experimental parameters:
+- The `_rtc` version has three experimental parameters:
+
+    - bm_error_s: (string)
+
+        Specify cost for block similarity measurement.
+
+        Currently implemented costs: `SSD`, `SAD`, `ZSSD`, `ZSAD`, `SSD/NORM`.
+
+        Default `SSD`.
 
     - transform_2d_s/transform_1d_s: (string)
 
@@ -101,7 +109,7 @@ bm3dcuda[_rtc].BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_st
 
         Default `DCT`.
 
-    This feature is not implemented in the standard version due to performance and binary size concerns.
+    These features are not implemented in the standard version due to performance and binary size concerns.
 
 ## Statistics
 
