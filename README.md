@@ -97,7 +97,12 @@ bm3dcuda[_rtc].BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_st
 
         Specify cost for block similarity measurement.
 
-        Currently implemented costs: `SSD`, `SAD`, `ZSSD`, `ZSAD`, `SSD/NORM`.
+        Currently implemented costs: 
+        `SSD` (Sum of Squared Differences), 
+        `SAD` (Sum of Absolute Differences), 
+        `ZSSD` (Zero-mean SSD), 
+        `ZSAD` (Zero-mean SAD), 
+        `SSD/NORM`.
 
         Default `SSD`.
 
@@ -105,7 +110,11 @@ bm3dcuda[_rtc].BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_st
 
         Specify type of transform.
 
-        Currently implemented transforms: `DCT`, `Haar`, `WHT`, `Bior1.5`.
+        Currently implemented transforms: 
+        `DCT` (Discrete Cosine Transform), 
+        `Haar` (Haar Transform), 
+        `WHT` (Walsh–Hadamard Transform), 
+        `Bior1.5` (transform based on a bi-orthogonal spline wavelet).
 
         Default `DCT`.
 
