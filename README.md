@@ -14,6 +14,8 @@ BM3D denoising filter for VapourSynth, implemented in CUDA.
 
 - The `_rtc` version compiles GPU code at runtime, which might runs faster than standard version at the cost of a slight overhead.
 
+- The `cpu` version is implemented in AVX/AVX2 intrinsics, serves as a reference implementation on CPU. However, _bitwise identical_ outputs are not guaranteed across CPU and CUDA implementations.
+
 ## Requirements
 
 - CPU with AVX support.
@@ -26,10 +28,12 @@ The minimum requirement on compute capability is 3.5, which requires manual comp
 
 The `_rtc` version requires compute capability 3.5 or higher, GPU driver 465 or newer and has dependencies on `nvrtc64_112_0.dll/libnvrtc.so.11.2` and `nvrtc-builtins64_113.dll/libnvrtc-builtins.so.11.3.109`.
 
+The `cpu` version does not require any external libraries but requires AVX2 support on CPU in addition.
+
 ## Parameters
 
 ```python3
-bm3dcuda[_rtc].BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_step=8, int[] bm_range=9, int radius=0, int[] ps_num=2, int[] ps_range=4, bint chroma=False, int device_id=0, bool fast=True, int extractor_exp=0])
+{bm3dcuda, bm3dcuda_rtc, bm3dcpu}.BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_step=8, int[] bm_range=9, int radius=0, int[] ps_num=2, int[] ps_range=4, bint chroma=False, int device_id=0, bool fast=True, int extractor_exp=0])
 ```
 
 - clip:
@@ -79,7 +83,7 @@ bm3dcuda[_rtc].BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_st
 
 - extractor_exp:
 
-    Used for deterministic (bitwise) output.
+    Used for deterministic (bitwise) output. This parameter is not present in the `cpu` version since it always produces deterministic output.
 
     [Pre-rounding](https://ieeexplore.ieee.org/document/6545904) is employed for associative floating-point summation.
 
@@ -138,12 +142,19 @@ cd source
 
 nvcc kernel.cu -o kernel.o -c --use_fast_math --std=c++17 -gencode arch=compute_50,code=\"sm_50,compute_50\" -gencode arch=compute_52,code=sm_52 -gencode arch=compute_61,code=sm_61 -gencode arch=compute_75,code=sm_75 -gencode arch=compute_86,code=\"sm_86,compute_86\" -t 0 --compiler-bindir g++-10
 
-g++-11 source.cpp kernel.o -o libbm3dcuda.so -shared -fPIC -I/usr/local/cuda-11.3/include -I/usr/local/include -L/usr/local/cuda-11.3/lib64 -lcudart_static --std=c++20 -march=native -O3
+g++-11 source.cpp kernel.o -o libbm3dcuda.so -shared -fPIC -I/usr/local/cuda-11.3/include -L/usr/local/cuda-11.3/lib64 -lcudart_static --std=c++20 -march=native -O3
 ```
 
 ### RTC version
 ```
 cd rtc_source
 
-g++-11 source.cpp -o libbm3dcuda_rtc.so -shared -fPIC -I /usr/local/cuda-11.3/include -I /usr/local/include -L /usr/local/cuda-11.3/lib64 -lnvrtc -lcuda -Wl,-rpath,/usr/local/cuda-11.3/lib64 --std=c++20 -march=native -O3
+g++-11 source.cpp -o libbm3dcuda_rtc.so -shared -fPIC -I /usr/local/cuda-11.3/include -L /usr/local/cuda-11.3/lib64 -lnvrtc -lcuda -Wl,-rpath,/usr/local/cuda-11.3/lib64 --std=c++20 -march=native -O3
+```
+
+### CPU version
+```
+cd cpu_source
+
+g++ source.cpp -o libbm3dcpu.so -shared -fPIC --std=c++20 -march=native -O3
 ```

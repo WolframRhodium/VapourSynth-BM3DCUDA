@@ -7,6 +7,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "BM3DCUDA", "BM3DCUDA.vcxpro
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "BM3DCUDA_RTC", "BM3DCUDA_RTC.vcxproj", "{53F9BD34-15BF-4483-AC67-0EAEC9A7FFC4}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "BM3DCPU", "BM3DCPU.vcxproj", "{DD5FA8CA-E6CE-483A-B79A-5E3788B5474C}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -30,6 +32,14 @@ Global
 		{53F9BD34-15BF-4483-AC67-0EAEC9A7FFC4}.Release|x64.Build.0 = Release|x64
 		{53F9BD34-15BF-4483-AC67-0EAEC9A7FFC4}.Release|x86.ActiveCfg = Release|Win32
 		{53F9BD34-15BF-4483-AC67-0EAEC9A7FFC4}.Release|x86.Build.0 = Release|Win32
+		{DD5FA8CA-E6CE-483A-B79A-5E3788B5474C}.Debug|x64.ActiveCfg = Debug|x64
+		{DD5FA8CA-E6CE-483A-B79A-5E3788B5474C}.Debug|x64.Build.0 = Debug|x64
+		{DD5FA8CA-E6CE-483A-B79A-5E3788B5474C}.Debug|x86.ActiveCfg = Debug|Win32
+		{DD5FA8CA-E6CE-483A-B79A-5E3788B5474C}.Debug|x86.Build.0 = Debug|Win32
+		{DD5FA8CA-E6CE-483A-B79A-5E3788B5474C}.Release|x64.ActiveCfg = Release|x64
+		{DD5FA8CA-E6CE-483A-B79A-5E3788B5474C}.Release|x64.Build.0 = Release|x64
+		{DD5FA8CA-E6CE-483A-B79A-5E3788B5474C}.Release|x86.ActiveCfg = Release|Win32
+		{DD5FA8CA-E6CE-483A-B79A-5E3788B5474C}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
