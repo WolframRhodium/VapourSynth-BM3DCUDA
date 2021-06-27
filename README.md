@@ -83,7 +83,7 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
 
 - extractor_exp:
 
-    Used for deterministic (bitwise) output. This parameter is not present in the `cpu` version since it always produces deterministic output.
+    Used for deterministic (bitwise) output. This parameter is not presented in the `cpu` version since the implementation always produces deterministic output.
 
     [Pre-rounding](https://ieeexplore.ieee.org/document/6545904) is employed for associative floating-point summation.
 
