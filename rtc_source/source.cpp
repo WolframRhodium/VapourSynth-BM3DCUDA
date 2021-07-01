@@ -834,8 +834,11 @@ static void VS_CC BM3DCreate(
             if (
                 temp != "ssd" && temp != "sad" && 
                 temp != "zssd" && temp != "zsad" && 
-                temp != "ssd_norm") {
+                temp != "ssd/norm") {
                 return set_error("invalid \'bm_error_s\': "  + temp);
+            }
+            if (temp == "ssd/norm") {
+                temp = "ssd_norm";
             }
         }
         d->bm_error_s[i] = std::move(temp);

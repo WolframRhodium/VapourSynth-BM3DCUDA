@@ -47,12 +47,11 @@ extern cudaGraphExec_t get_graphexec(
     bool final_, float extractor
 ) noexcept;
 
-#define checkError(expr) do {                                                    \
-    cudaError_t __err = expr;                                                    \
-    if (__err != cudaSuccess) [[unlikely]] {                                     \
-        const char * error_str = cudaGetErrorString(__err);                      \
-        return set_error("'"s + # expr + "' failed: " + error_str);              \
-    }                                                                            \
+#define checkError(expr) do {                                            \
+    if (cudaError_t result = expr; result != cudaSuccess) [[unlikely]] { \
+        const char * error_str = cudaGetErrorString(result);             \
+        return set_error("'"s + # expr + "' failed: " + error_str);      \
+    }                                                                    \
 } while(0)
 
 constexpr int kFast = 4;
@@ -171,7 +170,7 @@ static inline void Aggregation(
     const float * wdst = h_res;
     const float * weight = &h_res[height * d_stride];
 
-    for (auto y = 0; y < height; ++y) {
+    for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             dstp[x] = wdst[x] / weight[x];
         }
