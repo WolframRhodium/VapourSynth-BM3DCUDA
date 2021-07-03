@@ -32,7 +32,7 @@
 //
 // Algorithm details:
 // 1. The DC element of the transform coefficients of 3D group is always untouched.
-// 2. Coarse prefiltering are Kaiser window are not implemented.
+// 2. Coarse prefiltering and Kaiser window are not implemented.
 // 3. `group_size` is fixed to 8.
 // 4. Predictive search is only implemented for V-BM3D, and the spatial coordinates
 //    of the previously found locations are restricted to the top `ps_num` coordinates.
@@ -74,7 +74,7 @@ struct BM3DData {
 
     bool process[3]; // sigma != 0
 
-    std::unordered_map<std::thread::id, float *> buffer;
+    std::unordered_map<std::thread::id, float *> buffer; // not used by V-BM3D
 };
 
 // shuffle_up({0, 1, ..., 7}) => {0, 0, 1, ..., 6}
@@ -85,7 +85,6 @@ static inline __m256 shuffle_up(__m256 x) noexcept {
 
 // shuffle_up({0, 1, ..., 7}) => {0, 0, 1, ..., 6}
 static inline __m256i shuffle_up(__m256i x) noexcept { 
-    // _mm256_permutevar8x32_epi32({0, 1, .. 7}, pre_mask) => {0, 0, 1, .. 6}
     __m256i pre_mask { _mm256_setr_epi32(0, 0, 1, 2, 3, 4, 5, 6) };
     return _mm256_permutevar8x32_epi32(x, pre_mask);
 }
@@ -140,7 +139,7 @@ static inline __m256 compute_distance(
 }
 
 // Given an `reference_block`, finds 8 most similar blocks
-// whose coordinates are within a local neighborhood of `bm_range`^2 
+// whose coordinates are within a local neighborhood of (2 * `bm_range` + 1)^2 
 // centered at coordinates (`x`, `y`) in an input plane denoted by 
 // {`global_srcp`, `stride`, `width`, `height`}, and updates the 
 // matched coordinates and distance in {`index_x`, `index_y`} and `errors`.
@@ -153,7 +152,7 @@ static inline void block_matching(
     int width, int height, 
     int bm_range, int x, int y
 ) noexcept {
-    
+
     const __m256i first_mask { _mm256_setr_epi32(0xFFFFFFFF, 0, 0, 0, 0, 0, 0, 0) };
 
     // clamps candidate locations to be within the plane
@@ -747,19 +746,18 @@ static inline void bm3d(
         std::nullptr_t> refps, 
     int width, int height, 
     std::span<const float, num_planes(chroma)> sigma, 
-    int block_step, int bm_range, 
-    int radius, int ps_num, int ps_range, 
-    float * VS_RESTRICT buffer
+    int block_step, int bm_range, int radius, int ps_num, int ps_range, 
+    std::conditional_t<temporal, std::nullptr_t, float * VS_RESTRICT> buffer
 ) noexcept {
 
     const int temporal_width = 2 * radius + 1;
     const int center = radius;
 
-    for (int y = 0; y < height; y += block_step) {
-        y = std::min(y, height - 8); // clamp
+    for (int _y = 0; _y < height; _y += block_step) {
+        int y = std::min(_y, height - 8); // clamp
 
-        for (int x = 0; x < width; x += block_step) {
-            x = std::min(x, width - 8); // clamp
+        for (int _x = 0; _x < width; _x += block_step) {
+            int x = std::min(_x, width - 8); // clamp
 
             __m256 reference_block[8];
             if constexpr (final_) {
@@ -1031,9 +1029,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         width, height, 
                         sigma, block_step, bm_range, 
                         radius, ps_num, ps_range, 
-                        buffer);
+                        nullptr);
                 }
-                
+
             } else {
                 constexpr bool final_ = true;
                 std::vector refps = [&](){
@@ -1061,7 +1059,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         width, height, 
                         sigma, block_step, bm_range, 
                         radius, ps_num, ps_range, 
-                        buffer);
+                        nullptr);
                 }
             }
         } else {
@@ -1109,7 +1107,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                             memset(dstp, 0, sizeof(float) * stride * height * 2 * temporal_width);
                         }
                     }
-                    
+
                     if (d->ref_node == nullptr) {
                         constexpr bool final_ = false;
                         if (radius == 0) {
@@ -1127,7 +1125,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                                 width, height, 
                                 sigma, block_step, bm_range, 
                                 radius, ps_num, ps_range, 
-                                buffer);
+                                nullptr);
                         }
                     } else {
                         constexpr bool final_ = true;
@@ -1154,7 +1152,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                                 width, height, 
                                 sigma, block_step, bm_range, 
                                 radius, ps_num, ps_range, 
-                                buffer);
+                                nullptr);
                         }
                     }
                 }
@@ -1326,9 +1324,9 @@ static void VS_CC BM3DCreate(
     }
     d->chroma = chroma;
 
-    const unsigned numThreads = vsapi->getCoreInfo(core)->numThreads;
     if (radius == 0) {
-        d->buffer.reserve(numThreads);
+        auto num_threads = vsapi->getCoreInfo(core)->numThreads;
+        d->buffer.reserve(num_threads);
     }
 
     vsapi->createFilter(
