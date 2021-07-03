@@ -706,7 +706,7 @@ void bm3d(
     const int sub_lane_id = lane_id % 8; // 0 ~ 7
     int x = (4 * blockIdx.x + lane_id / 8) * block_step;
     int y = block_step * blockIdx.y;
-    if (x >= width || y >= height) {
+    if (x >= width - 8 + block_step || y >= height - 8 + block_step) {
         return;
     }
 
