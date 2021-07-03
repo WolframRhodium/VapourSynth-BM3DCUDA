@@ -753,10 +753,10 @@ static inline void bm3d(
     const int temporal_width = 2 * radius + 1;
     const int center = radius;
 
-    for (int _y = 0; _y < height; _y += block_step) {
+    for (int _y = 0; _y < height - 8 + block_step; _y += block_step) {
         int y = std::min(_y, height - 8); // clamp
 
-        for (int _x = 0; _x < width; _x += block_step) {
+        for (int _x = 0; _x < width - 8 + block_step; _x += block_step) {
             int x = std::min(_x, width - 8); // clamp
 
             __m256 reference_block[8];
