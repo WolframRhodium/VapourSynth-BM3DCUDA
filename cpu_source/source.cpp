@@ -105,14 +105,6 @@ static inline __m256i reduce_add(__m256i x) noexcept {
     return x;
 }
 
-// Reduction operation of YMM lanes
-static inline __m256i reduce_or(__m256i x) noexcept {
-    x = _mm256_or_si256(x, _mm256_castps_si256(_mm256_permute_ps(_mm256_castsi256_ps(x), 0b10110001)));
-    x = _mm256_or_si256(x, _mm256_castps_si256(_mm256_permute_ps(_mm256_castsi256_ps(x), 0b01001110)));
-    x = _mm256_or_si256(x, _mm256_permute4x64_epi64(x, 0b01001110));
-    return x;
-}
-
 static inline void load_block(
     __m256 dst[8], const float * srcp, int stride
 ) noexcept {
@@ -138,17 +130,17 @@ static inline __m256 compute_distance(
     return reduce_add(_mm256_add_ps(errors[0], errors[1]));
 }
 
-// Given an `reference_block`, finds 8 most similar blocks
+// Given a `reference_block`, finds 8 most similar blocks
 // whose coordinates are within a local neighborhood of (2 * `bm_range` + 1)^2 
 // centered at coordinates (`x`, `y`) in an input plane denoted by 
-// {`global_srcp`, `stride`, `width`, `height`}, and updates the 
-// matched coordinates and distance in {`index_x`, `index_y`} and `errors`.
+// (`srcp`, `stride`, `width`, `height`), and updates the 
+// matched coordinates and distance in (`index_x`, `index_y`) and `errors`.
 static inline void block_matching(
     std::array<float, 8> & errors, 
     std::array<int, 8> & index_x, 
     std::array<int, 8> & index_y, 
     const __m256 reference_block[8], 
-    const float * global_srcp, int stride, 
+    const float * srcp, int stride, 
     int width, int height, 
     int bm_range, int x, int y
 ) noexcept {
@@ -165,7 +157,7 @@ static inline void block_matching(
     __m256i index8_x { _mm256_loadu_si256(reinterpret_cast<const __m256i *>(index_x.data())) };
     __m256i index8_y { _mm256_loadu_si256(reinterpret_cast<const __m256i *>(index_y.data())) };
 
-    const float * srcp_row = &global_srcp[top * stride + left];
+    const float * srcp_row = &srcp[top * stride + left];
     for (int row = top; row <= bottom; ++row) {
         const float * srcp = srcp_row; // pointer to 2D neighborhoods
         for (int col = left; col <= right; ++col) {
@@ -306,9 +298,7 @@ static inline void insert_if_not_in(
             _mm256_cmpeq_epi32(index8_y, current_index_y)) 
     };
 
-    flag = reduce_or(flag);
-
-    if (!_mm256_movemask_epi8(flag)) {
+    if (!_mm256_movemask_ps(_mm256_castps_si256(flag))) {
         __m256i pre_index_x { shuffle_up(index8_x) };
         __m256i pre_index_y { shuffle_up(index8_y) };
         index8_x = _mm256_blendv_epi8(pre_index_x, current_index_x, first_mask);
@@ -343,9 +333,7 @@ static inline void insert_if_not_in_temporal(
             _mm256_cmpeq_epi32(index8_z, current_index_z))
     };
 
-    flag = reduce_or(flag);
-
-    if (!_mm256_movemask_epi8(flag)) {
+    if (!_mm256_movemask_ps(_mm256_castps_si256(flag))) {
         __m256i pre_index_x { shuffle_up(index8_x) };
         __m256i pre_index_y { shuffle_up(index8_y) };
         __m256i pre_index_z { shuffle_up(index8_z) };
@@ -726,7 +714,7 @@ static inline void aggregation(
 }
 
 // Returns number of planes of data processed by a call 
-// to the processing kernel "bm3d"
+// to the processing kernel `bm3d`
 static constexpr int num_planes(bool chroma) noexcept {
     return chroma ? 3 : 1;
 }
