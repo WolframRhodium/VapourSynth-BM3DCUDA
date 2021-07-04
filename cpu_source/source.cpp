@@ -134,7 +134,7 @@ static inline __m256 compute_distance(
 // whose coordinates are within a local neighborhood of (2 * `bm_range` + 1)^2 
 // centered at coordinates (`x`, `y`) in an input plane denoted by 
 // (`srcp`, `stride`, `width`, `height`), and updates the 
-// matched coordinates and distance in (`index_x`, `index_y`) and `errors`.
+// matched coordinates and distances in (`index_x`, `index_y`) and `errors`.
 static inline void block_matching(
     std::array<float, 8> & errors, 
     std::array<int, 8> & index_x, 
@@ -298,7 +298,7 @@ static inline void insert_if_not_in(
             _mm256_cmpeq_epi32(index8_y, current_index_y)) 
     };
 
-    if (!_mm256_movemask_ps(_mm256_castps_si256(flag))) {
+    if (!_mm256_movemask_ps(_mm256_castsi256_ps(flag))) {
         __m256i pre_index_x { shuffle_up(index8_x) };
         __m256i pre_index_y { shuffle_up(index8_y) };
         index8_x = _mm256_blendv_epi8(pre_index_x, current_index_x, first_mask);
@@ -333,7 +333,7 @@ static inline void insert_if_not_in_temporal(
             _mm256_cmpeq_epi32(index8_z, current_index_z))
     };
 
-    if (!_mm256_movemask_ps(_mm256_castps_si256(flag))) {
+    if (!_mm256_movemask_ps(_mm256_castsi256_ps(flag))) {
         __m256i pre_index_x { shuffle_up(index8_x) };
         __m256i pre_index_y { shuffle_up(index8_y) };
         __m256i pre_index_z { shuffle_up(index8_z) };
