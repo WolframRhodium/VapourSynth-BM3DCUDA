@@ -43,6 +43,7 @@
 //    and scaled, i.e. each inverse results in the original array multiplied by N.
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -76,12 +77,6 @@ struct BM3DData {
 
     std::unordered_map<std::thread::id, float *> buffer; // not used by V-BM3D
 };
-
-// shuffle_up({0, 1, ..., 7}) => {0, 0, 1, ..., 6}
-static inline __m256 shuffle_up(__m256 x) noexcept { 
-    __m256i pre_mask { _mm256_setr_epi32(0, 0, 1, 2, 3, 4, 5, 6) };
-    return _mm256_permutevar8x32_ps(x, pre_mask);
-}
 
 // shuffle_up({0, 1, ..., 7}) => {0, 0, 1, ..., 6}
 static inline __m256i shuffle_up(__m256i x) noexcept { 
@@ -145,7 +140,12 @@ static inline void block_matching(
     int bm_range, int x, int y
 ) noexcept {
 
-    const __m256i first_mask { _mm256_setr_epi32(0xFFFFFFFF, 0, 0, 0, 0, 0, 0, 0) };
+    // helper data
+    constexpr int blend[] = {
+        0, 
+        0, 0, 0, 0, 0, 0, 0, -1,
+        0, 0, 0, 0, 0, 0, 0, 0 };
+    __m256i shift_base = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
 
     // clamps candidate locations to be within the plane
     int left = std::max(x - bm_range, 0);
@@ -167,26 +167,30 @@ static inline void block_matching(
             __m256 error = compute_distance(reference_block, candidate_block);
 
             __m256 flag { _mm256_cmp_ps(error, errors8, _CMP_LT_OQ) };
-            __m256i flag_i = _mm256_castps_si256(flag);
 
-            if (_mm256_movemask_ps(flag)) {
-                __m256 pre_flag { shuffle_up(flag) };
-                __m256 pre_error { shuffle_up(errors8) };
-                __m256i pre_index_x { shuffle_up(index8_x) };
-                __m256i pre_index_y { shuffle_up(index8_y) };
+            if (int imask = _mm256_movemask_ps(flag); imask) {
+                __m256i shuffle_mask = _mm256_add_epi32(
+                    shift_base, _mm256_castps_si256(flag));
+                __m256 pre_error = _mm256_permutevar8x32_ps(
+                    errors8, shuffle_mask);
+                __m256i pre_index_x = _mm256_permutevar8x32_epi32(
+                    index8_x, shuffle_mask);
+                __m256i pre_index_y = _mm256_permutevar8x32_epi32(
+                    index8_y, shuffle_mask);
 
-                __m256 first { _mm256_andnot_ps(_mm256_castsi256_ps(first_mask), pre_flag) };
-                __m256i first_i = _mm256_castps_si256(first);
+                int count = std::popcount(static_cast<unsigned int>(imask));
+                __m256 blend_mask = _mm256_castsi256_ps(_mm256_loadu_si256(
+                    reinterpret_cast<const __m256i *>(&blend[count])));
                 errors8 = _mm256_blendv_ps(
-                    errors8, _mm256_blendv_ps(error, pre_error, first), flag);
-                index8_x = _mm256_blendv_epi8(
-                    index8_x, 
-                    _mm256_blendv_epi8(_mm256_set1_epi32(col), pre_index_x, first_i), 
-                    flag_i);
-                index8_y = _mm256_blendv_epi8(
-                    index8_y, 
-                    _mm256_blendv_epi8(_mm256_set1_epi32(row), pre_index_y, first_i), 
-                    flag_i);
+                    pre_error, error, blend_mask);
+                index8_x = _mm256_castps_si256(_mm256_blendv_ps(
+                    _mm256_castsi256_ps(pre_index_x), 
+                    _mm256_castsi256_ps(_mm256_set1_epi32(col)), 
+                    blend_mask));
+                index8_y = _mm256_castps_si256(_mm256_blendv_ps(
+                    _mm256_castsi256_ps(pre_index_y), 
+                    _mm256_castsi256_ps(_mm256_set1_epi32(row)), 
+                    blend_mask));
             }
 
             ++srcp;
@@ -214,6 +218,13 @@ static inline void block_matching_temporal(
     int x, int y, int radius, int ps_num, int ps_range
 ) noexcept {
 
+    // helper data
+    constexpr int blend[] = {
+        0, 
+        0, 0, 0, 0, 0, 0, 0, -1,
+        0, 0, 0, 0, 0, 0, 0, 0 };
+    __m256i shift_base = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
+
     int center = radius;
 
     block_matching(
@@ -224,6 +235,11 @@ static inline void block_matching_temporal(
         bm_range, x, y);
 
     index_z.fill(center);
+
+    __m256 errors8 { _mm256_loadu_ps(errors.data()) };
+    __m256i index8_x { _mm256_loadu_si256(reinterpret_cast<const __m256i *>(index_x.data())) };
+    __m256i index8_y { _mm256_loadu_si256(reinterpret_cast<const __m256i *>(index_y.data())) };
+    __m256i index8_z { _mm256_loadu_si256(reinterpret_cast<const __m256i *>(index_z.data())) };
 
     std::array<int, 8> center_index8_x { index_x };
     std::array<int, 8> center_index8_y { index_y };
@@ -247,27 +263,39 @@ static inline void block_matching_temporal(
                     ps_range, last_index8_x[i], last_index8_y[i]);
             }
             for (int i = 0; i < ps_num; ++i) {
-                if (frame_errors8[i] < errors[7]) {
-                    for (int j = 6; j >= 0; --j) {
-                        if (frame_errors8[i] < errors[j]) {
-                            errors[j + 1] = errors[j];
-                            index_x[j + 1] = index_x[j];
-                            index_y[j + 1] = index_y[j];
-                            index_z[j + 1] = index_z[j];
-                            if (j == 0) {
-                                errors[0] = frame_errors8[i];
-                                index_x[0] = frame_index8_x[i];
-                                index_y[0] = frame_index8_y[i];
-                                index_z[0] = z;
-                            }
-                        } else {
-                            errors[j + 1] = frame_errors8[i];
-                            index_x[j + 1] = frame_index8_x[i];
-                            index_y[j + 1] = frame_index8_y[i];
-                            index_z[j + 1] = z;
-                            break;
-                        }
-                    }
+                __m256 error = _mm256_set1_ps(frame_errors8[i]);
+
+                __m256 flag { _mm256_cmp_ps(error, errors8, _CMP_LT_OQ) };
+
+                if (int imask = _mm256_movemask_ps(flag); imask) {
+                    __m256i shuffle_mask = _mm256_add_epi32(
+                        shift_base, _mm256_castps_si256(flag));
+                    __m256 pre_error = _mm256_permutevar8x32_ps(
+                        errors8, shuffle_mask);
+                    __m256i pre_index_x = _mm256_permutevar8x32_epi32(
+                        index8_x, shuffle_mask);
+                    __m256i pre_index_y = _mm256_permutevar8x32_epi32(
+                        index8_y, shuffle_mask);
+                    __m256i pre_index_z = _mm256_permutevar8x32_epi32(
+                        index8_z, shuffle_mask);
+
+                    int count = std::popcount(static_cast<unsigned int>(imask));
+                    __m256 blend_mask = _mm256_castsi256_ps(_mm256_loadu_si256(
+                        reinterpret_cast<const __m256i *>(&blend[count])));
+                    errors8 = _mm256_blendv_ps(
+                        pre_error, error, blend_mask);
+                    index8_x = _mm256_castps_si256(_mm256_blendv_ps(
+                        _mm256_castsi256_ps(pre_index_x), 
+                        _mm256_castsi256_ps(_mm256_set1_epi32(frame_index8_x[i])), 
+                        blend_mask));
+                    index8_y = _mm256_castps_si256(_mm256_blendv_ps(
+                        _mm256_castsi256_ps(pre_index_y), 
+                        _mm256_castsi256_ps(_mm256_set1_epi32(frame_index8_y[i])), 
+                        blend_mask));
+                    index8_z = _mm256_castps_si256(_mm256_blendv_ps(
+                        _mm256_castsi256_ps(pre_index_z), 
+                        _mm256_castsi256_ps(_mm256_set1_epi32(z)), 
+                        blend_mask));
                 }
             }
 
@@ -275,6 +303,11 @@ static inline void block_matching_temporal(
             last_index8_y = frame_index8_y;
         }
     }
+
+    _mm256_storeu_ps(errors.data(), errors8);
+    _mm256_storeu_si256(reinterpret_cast<__m256i *>(index_x.data()), index8_x);
+    _mm256_storeu_si256(reinterpret_cast<__m256i *>(index_y.data()), index8_y);
+    _mm256_storeu_si256(reinterpret_cast<__m256i *>(index_z.data()), index8_z);
 }
 
 // Set the first element in the arrays of coordinates to be (`x`, `y`)
