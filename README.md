@@ -54,7 +54,7 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
     vfinal = core.{bm3d...}.BM3D(src, ref=vbasic, radius=r).bm3d.VAggregate(radius=r)
     ```
 
-    corresponds to the followings, respectively
+    corresponds to the followings (ignoring color space handling and other differences in implementation), respectively
 
     ```python3
     basic = core.bm3d.Basic(clip)
