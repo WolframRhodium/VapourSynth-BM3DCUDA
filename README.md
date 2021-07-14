@@ -44,7 +44,25 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
 
     The reference clip. Must be of the same format, width, height, number of frames as `clip`.
 
-    Used in block-matching and as the reference in empirical Wiener filtering, i.e. `bm3d.Final` / `bm3d.VFinal`.
+    Used in block-matching and as the reference in empirical Wiener filtering, i.e. `bm3d.Final` / `bm3d.VFinal`:
+
+    ```python3
+    basic = core.{bm3dcpu, bm3dcuda, bm3dcuda_rtc}.BM3D(clip, radius=0)
+    final = core.{bm3d...}.BM3D(basic, ref=src, radius=0)
+
+    vbasic = core.{bm3d...}.BM3D(src, radius=radius_nonzero).bm3d.VAggregate(radius=radius_nonzero)
+    vfinal = core.{bm3d...}.BM3D(src, ref=vbasic, radius=r).bm3d.VAggregate(radius=r)
+    ```
+
+    corresponds to the followings, respectively
+
+    ```python3
+    basic = core.bm3d.Basic(clip)
+    final = core.bm3d.Final(basic, ref=src)
+
+    vbasic = core.bm3d.VBasic(src, radius=r).bm3d.VAggregate(radius=r)
+    vfinal = core.bm3d.VFinal(src, ref=vbasic, radius=r).bm3d.VAggregate(radius=r)
+    ```
 
 - sigma:
     The strength of denoising for each plane.
