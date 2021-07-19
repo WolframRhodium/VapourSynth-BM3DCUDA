@@ -42,13 +42,13 @@
 // 2. The DCT implementation uses a modified FFTW subroutine that is normalized
 //    and scaled, i.e. each inverse results in the original array multiplied by N.
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-#include <span>
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
@@ -996,10 +996,10 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 return temp;
             }();
 
-            std::array dstps {
-                cast_fp(vsapi->getWritePtr(dst_frame, 0)), 
-                cast_fp(vsapi->getWritePtr(dst_frame, 1)), 
-                cast_fp(vsapi->getWritePtr(dst_frame, 2))
+            std::array<float * VS_RESTRICT, 3> dstps {
+                const_cast<float * VS_RESTRICT>(cast_fp(vsapi->getWritePtr(dst_frame, 0))),
+                const_cast<float * VS_RESTRICT>(cast_fp(vsapi->getWritePtr(dst_frame, 1))),
+                const_cast<float * VS_RESTRICT>(cast_fp(vsapi->getWritePtr(dst_frame, 2)))
             };
 
             const int width = vsapi->getFrameWidth(src_frame, 0);
@@ -1096,7 +1096,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         }
                         return temp;
                     }();
-                    std::array dstps { cast_fp(vsapi->getWritePtr(dst_frame, plane)) };
+                    std::array<float * VS_RESTRICT, 1> dstps { const_cast<float * VS_RESTRICT>(cast_fp(vsapi->getWritePtr(dst_frame, plane))) };
 
                     const int width = vsapi->getFrameWidth(src_frame, plane);
                     const int height = vsapi->getFrameHeight(src_frame, plane);
