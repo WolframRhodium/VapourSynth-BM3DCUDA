@@ -174,5 +174,5 @@ g++-11 source.cpp -o libbm3dcuda_rtc.so -shared -fPIC -I /usr/local/cuda-11.3/in
 ```
 cd cpu_source
 
-g++ source.cpp -o libbm3dcpu.so -shared -fPIC --std=c++20 -march=native -O3
+g++ source.cpp -o libbm3dcpu.so -shared -fPIC --std=c++17 -march=native -O3
 ```
