@@ -766,7 +766,7 @@ static inline void bm3d(
         const float * VS_RESTRICT [/* num_planes(chroma) * (2 * radius + 1) */], 
         std::nullptr_t> refps, 
     int width, int height, 
-    const std::array<float, num_planes(chroma)> sigma, 
+    const std::array<float, num_planes(chroma)> &sigma,
     int block_step, int bm_range, int radius, int ps_num, int ps_range, 
     std::conditional_t<temporal, std::nullptr_t, float * VS_RESTRICT> buffer
 ) noexcept {
