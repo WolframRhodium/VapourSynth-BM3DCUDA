@@ -1346,7 +1346,9 @@ static void VS_CC BM3DCreate(
     d->chroma = chroma;
 
     if (radius == 0) {
-        auto num_threads = vsapi->getCoreInfo(core)->numThreads;
+        struct VSCoreInfo ci;
+        vsapi->getCoreInfo2(core, &ci);
+        auto num_threads = ci.numThreads;
         d->buffer.reserve(num_threads);
     }
 
