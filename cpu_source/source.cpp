@@ -42,13 +42,13 @@
 // 2. The DCT implementation uses a modified FFTW subroutine that is normalized
 //    and scaled, i.e. each inverse results in the original array multiplied by N.
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-#include <span>
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
@@ -178,7 +178,7 @@ static inline void block_matching(
                 __m256i pre_index_y = _mm256_permutevar8x32_epi32(
                     index8_y, shuffle_mask);
 
-                int count = std::popcount(static_cast<unsigned int>(imask));
+                int count = _mm_popcnt_u32(static_cast<unsigned int>(imask));
                 __m256 blend_mask = _mm256_castsi256_ps(_mm256_loadu_si256(
                     reinterpret_cast<const __m256i *>(&blend[count])));
                 errors8 = _mm256_blendv_ps(
@@ -279,7 +279,7 @@ static inline void block_matching_temporal(
                     __m256i pre_index_z = _mm256_permutevar8x32_epi32(
                         index8_z, shuffle_mask);
 
-                    int count = std::popcount(static_cast<unsigned int>(imask));
+                    int count = _mm_popcnt_u32(static_cast<unsigned int>(imask));
                     __m256 blend_mask = _mm256_castsi256_ps(_mm256_loadu_si256(
                         reinterpret_cast<const __m256i *>(&blend[count])));
                     errors8 = _mm256_blendv_ps(
@@ -313,8 +313,8 @@ static inline void block_matching_temporal(
 // Set the first element in the arrays of coordinates to be (`x`, `y`)
 // if the coordinate is not in the array
 static inline void insert_if_not_in(
-    std::span<int, 8> index8_x_data, 
-    std::span<int, 8> index8_y_data, 
+    std::array<int, 8> &index8_x_data,
+    std::array<int, 8> &index8_y_data,
     int x, int y
 ) noexcept {
 
@@ -344,9 +344,9 @@ static inline void insert_if_not_in(
 
 // Temporal version of function `insert_if_not_in`
 static inline void insert_if_not_in_temporal(
-    std::span<int, 8> index8_x_data, 
-    std::span<int, 8> index8_y_data, 
-    std::span<int, 8> index8_z_data, 
+    std::array<int, 8> &index8_x_data, 
+    std::array<int, 8> &index8_y_data, 
+    std::array<int, 8> &index8_z_data, 
     int x, int y, int z
 ) noexcept {
 
@@ -382,7 +382,7 @@ static inline void insert_if_not_in_temporal(
 
 static inline void load_3d_group(
     __m256 dst[64], const float * VS_RESTRICT srcp, int stride, 
-    std::span<const int, 8> index_x, std::span<const int, 8> index_y
+    const std::array<int, 8> &index_x, const std::array<int, 8> &index_y
 ) noexcept {
 
     for (int i = 0; i < 8; ++i) {
@@ -396,9 +396,9 @@ static inline void load_3d_group(
 // Temporal version of function `load_3d_group`
 static inline void load_3d_group_temporal(__m256 dst[64], 
     const float * VS_RESTRICT srcps[/* 2 * radius + 1 */], int stride, 
-    std::span<const int, 8> index_x, 
-    std::span<const int, 8> index_y, 
-    std::span<const int, 8> index_z
+    const std::array<int, 8> &index_x, 
+    const std::array<int, 8> &index_y, 
+    const std::array<int, 8> &index_z
 ) noexcept {
 
     for (int i = 0; i < 8; ++i) {
@@ -666,8 +666,8 @@ static inline void local_accumulation(
     float * VS_RESTRICT weightp, 
     int stride, 
     const __m256 denoising_group[64], 
-    std::span<const int, 8> index_x, 
-    std::span<const int, 8> index_y, 
+    const std::array<int, 8> &index_x, 
+    const std::array<int, 8> &index_y, 
     __m256 adaptive_weight
 ) noexcept {
 
@@ -697,9 +697,9 @@ static inline void local_accumulation_temporal(
     float * VS_RESTRICT weightp, 
     int stride, 
     const __m256 denoising_group[64], 
-    std::span<const int, 8> index_x, 
-    std::span<const int, 8> index_y, 
-    std::span<const int, 8> index_z, 
+    const std::array<int, 8> &index_x, 
+    const std::array<int, 8> &index_y, 
+    const std::array<int, 8> &index_z, 
     __m256 adaptive_weight, 
     int height
 ) noexcept {
@@ -758,7 +758,7 @@ static constexpr int num_planes(bool chroma) noexcept {
 // and is left for `bm3d.VAggregate()`.
 template <bool temporal, bool chroma, bool final_>
 static inline void bm3d(
-    std::span<float * VS_RESTRICT, num_planes(chroma)> dstps, 
+    std::array<float * VS_RESTRICT, num_planes(chroma)> &dstps, 
     int stride, 
     const float * VS_RESTRICT srcps[/* num_planes(chroma) * (2 * radius + 1) */], 
     std::conditional_t<
@@ -766,7 +766,7 @@ static inline void bm3d(
         const float * VS_RESTRICT [/* num_planes(chroma) * (2 * radius + 1) */], 
         std::nullptr_t> refps, 
     int width, int height, 
-    std::span<const float, num_planes(chroma)> sigma, 
+    const std::array<float, num_planes(chroma)> &sigma,
     int block_step, int bm_range, int radius, int ps_num, int ps_range, 
     std::conditional_t<temporal, std::nullptr_t, float * VS_RESTRICT> buffer
 ) noexcept {
@@ -996,10 +996,10 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 return temp;
             }();
 
-            std::array dstps {
-                cast_fp(vsapi->getWritePtr(dst_frame, 0)), 
-                cast_fp(vsapi->getWritePtr(dst_frame, 1)), 
-                cast_fp(vsapi->getWritePtr(dst_frame, 2))
+            std::array<float * VS_RESTRICT, 3> dstps {
+                const_cast<float * VS_RESTRICT>(cast_fp(vsapi->getWritePtr(dst_frame, 0))),
+                const_cast<float * VS_RESTRICT>(cast_fp(vsapi->getWritePtr(dst_frame, 1))),
+                const_cast<float * VS_RESTRICT>(cast_fp(vsapi->getWritePtr(dst_frame, 2)))
             };
 
             const int width = vsapi->getFrameWidth(src_frame, 0);
@@ -1014,7 +1014,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             float * const buffer = [&]() -> float * {
                 if (radius == 0) {
                     const auto thread_id = std::this_thread::get_id();
-                    if (!d->buffer.contains(thread_id)) {
+                    if (d->buffer.count(thread_id) == 0) {
                         float * buffer = vs_aligned_malloc<float>(
                             sizeof(float) * stride * height * 2 * num_planes(chroma), 32);
                         d->buffer.emplace(thread_id, buffer);
@@ -1096,7 +1096,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         }
                         return temp;
                     }();
-                    std::array dstps { cast_fp(vsapi->getWritePtr(dst_frame, plane)) };
+                    std::array<float * VS_RESTRICT, 1> dstps { const_cast<float * VS_RESTRICT>(cast_fp(vsapi->getWritePtr(dst_frame, plane))) };
 
                     const int width = vsapi->getFrameWidth(src_frame, plane);
                     const int height = vsapi->getFrameHeight(src_frame, plane);
@@ -1110,7 +1110,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                     float * const buffer = [&]() -> float * {
                         if (radius == 0) {
                             const auto thread_id = std::this_thread::get_id();
-                            if (!d->buffer.contains(thread_id)) {
+                            if (d->buffer.count(thread_id) == 0) {
                                 float * buffer = vs_aligned_malloc<float>(
                                     sizeof(float) * stride * height * 2 * num_planes(chroma), 32);
                                 d->buffer.emplace(thread_id, buffer);
@@ -1258,7 +1258,7 @@ static void VS_CC BM3DCreate(
         }
     }
 
-    for (unsigned i = 0; i < std::ssize(d->sigma); ++i) {
+    for (unsigned i = 0; i < std::size(d->sigma); ++i) {
         float sigma = static_cast<float>(
             vsapi->propGetFloat(in, "sigma", i, &error));
 
@@ -1276,7 +1276,7 @@ static void VS_CC BM3DCreate(
         d->sigma[i] = sigma;
     }
 
-    for (unsigned i = 0; i < std::ssize(d->block_step); ++i) {
+    for (unsigned i = 0; i < std::size(d->block_step); ++i) {
         int block_step = int64ToIntS(
             vsapi->propGetInt(in, "block_step", i, &error));
 
@@ -1289,7 +1289,7 @@ static void VS_CC BM3DCreate(
         d->block_step[i] = block_step;
     }
 
-    for (unsigned i = 0; i < std::ssize(d->bm_range); ++i) {
+    for (unsigned i = 0; i < std::size(d->bm_range); ++i) {
         int bm_range = int64ToIntS(
             vsapi->propGetInt(in, "bm_range", i, &error));
 
@@ -1310,7 +1310,7 @@ static void VS_CC BM3DCreate(
     }
     d->radius = radius;
 
-    for (unsigned i = 0; i < std::ssize(d->ps_num); ++i) {
+    for (unsigned i = 0; i < std::size(d->ps_num); ++i) {
         int ps_num = int64ToIntS(
             vsapi->propGetInt(in, "ps_num", i, &error));
 
@@ -1323,7 +1323,7 @@ static void VS_CC BM3DCreate(
         d->ps_num[i] = ps_num;
     }
 
-    for (unsigned i = 0; i < std::ssize(d->ps_range); ++i) {
+    for (unsigned i = 0; i < std::size(d->ps_range); ++i) {
         int ps_range = int64ToIntS(
             vsapi->propGetInt(in, "ps_range", i, &error));
 
@@ -1346,7 +1346,9 @@ static void VS_CC BM3DCreate(
     d->chroma = chroma;
 
     if (radius == 0) {
-        auto num_threads = vsapi->getCoreInfo(core)->numThreads;
+        struct VSCoreInfo ci;
+        vsapi->getCoreInfo2(core, &ci);
+        auto num_threads = ci.numThreads;
         d->buffer.reserve(num_threads);
     }
 
