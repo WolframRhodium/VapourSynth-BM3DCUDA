@@ -1,9 +1,5 @@
 # VapourSynth-BM3DCUDA
 
-Copyright© 2003, 2007-14 Matteo Frigo
-
-Copyright© 2003, 2007-14 Massachusetts Institute of Technology
-
 Copyright© 2021 WolframRhodium
 
 BM3D denoising filter for VapourSynth, implemented in CUDA.
@@ -151,7 +147,7 @@ GPU memory consumptions:
 ## Compilation on Linux
 
 ### Standard version
-- g++ 11 (or higher) is required to compile `source.cpp`, while nvcc 11.3 only supports g++ 10 or older.
+- g++ 11 (or higher) is required to compile `source.cpp`, while nvcc 11.4 only supports g++ 10 or older.
 
 - Unused nvcc flags may be removed. [Documentation for -gencode](https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/index.html#options-for-steering-gpu-code-generation-generate-code)
 
@@ -160,14 +156,18 @@ cd source
 
 nvcc kernel.cu -o kernel.o -c --use_fast_math --std=c++17 -gencode arch=compute_50,code=\"sm_50,compute_50\" -gencode arch=compute_52,code=sm_52 -gencode arch=compute_61,code=sm_61 -gencode arch=compute_75,code=sm_75 -gencode arch=compute_86,code=\"sm_86,compute_86\" -t 0 --compiler-bindir g++-10
 
-g++-11 source.cpp kernel.o -o libbm3dcuda.so -shared -fPIC -I/usr/local/cuda-11.3/include -L/usr/local/cuda-11.3/lib64 -lcudart_static --std=c++20 -march=native -O3
+# VapourSynth
+g++-11 source.cpp kernel.o -o libbm3dcuda.so -shared -fPIC -I/usr/local/cuda-11.4/include -L/usr/local/cuda-11.4/lib64 -lcudart_static --std=c++20 -march=native -O3
+
+# AviSynth (x64)
+g++-11 source_avs.cpp kernel.o -o libbm3dcuda_avs.so -shared -fPIC -I/usr/local/cuda-11.4/include -L/usr/local/cuda-11.4/lib64 -lcudart_static --std=c++20 -march=native -O3
 ```
 
 ### RTC version
 ```
 cd rtc_source
 
-g++-11 source.cpp -o libbm3dcuda_rtc.so -shared -fPIC -I /usr/local/cuda-11.3/include -L /usr/local/cuda-11.3/lib64 -lnvrtc -lcuda -Wl,-rpath,/usr/local/cuda-11.3/lib64 --std=c++20 -march=native -O3
+g++-11 source.cpp -o libbm3dcuda_rtc.so -shared -fPIC -I /usr/local/cuda-11.4/include -L /usr/local/cuda-11.4/lib64 -lnvrtc -lcuda -Wl,-rpath,/usr/local/cuda-11.4/lib64 --std=c++20 -march=native -O3
 ```
 
 ### CPU version
