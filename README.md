@@ -159,7 +159,7 @@ nvcc kernel.cu -o kernel.o -c --use_fast_math --std=c++17 -gencode arch=compute_
 # VapourSynth
 g++-11 source.cpp kernel.o -o libbm3dcuda.so -shared -fPIC -I/usr/local/cuda-11.4/include -L/usr/local/cuda-11.4/lib64 -lcudart_static --std=c++20 -march=native -O3
 
-# AviSynth (x64)
+# AviSynth
 g++-11 source_avs.cpp kernel.o -o libbm3dcuda_avs.so -shared -fPIC -I/usr/local/cuda-11.4/include -L/usr/local/cuda-11.4/lib64 -lcudart_static --std=c++20 -march=native -O3
 ```
 
@@ -174,5 +174,9 @@ g++-11 source.cpp -o libbm3dcuda_rtc.so -shared -fPIC -I /usr/local/cuda-11.4/in
 ```
 cd cpu_source
 
-g++ source.cpp -o libbm3dcpu.so -shared -fPIC --std=c++17 -march=native -O3
+# VapourSynth
+g++ source.cpp -o libbm3dcpu.so -shared -fPIC --std=c++17 -march=native -O3 -ffast-math
+
+# Avisynth
+g++ source_avs.cpp -o libbm3dcpu_avs.so -shared -fPIC --std=c++17 -march=native -O3 -ffast-math
 ```
