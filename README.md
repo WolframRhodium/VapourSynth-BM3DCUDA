@@ -14,7 +14,7 @@ BM3D denoising filter for VapourSynth, implemented in CUDA.
 
 - The `_rtc` version compiles GPU code at runtime, which might runs faster than standard version at the cost of a slight overhead.
 
-- The `cpu` version is implemented in AVX/AVX2 intrinsics, serves as a reference implementation on CPU. However, _bitwise identical_ outputs are not guaranteed across CPU and CUDA implementations.
+- The `cpu` version is implemented in AVX and AVX2 intrinsics, serves as a reference implementation on CPU. However, _bitwise identical_ outputs are not guaranteed across CPU and CUDA implementations.
 
 ## Requirements
 
