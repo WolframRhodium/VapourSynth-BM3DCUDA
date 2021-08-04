@@ -1,9 +1,5 @@
 # VapourSynth-BM3DCUDA
 
-Copyright© 2003, 2007-14 Matteo Frigo
-
-Copyright© 2003, 2007-14 Massachusetts Institute of Technology
-
 Copyright© 2021 WolframRhodium
 
 BM3D denoising filter for VapourSynth, implemented in CUDA.
@@ -101,7 +97,7 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
 
 - extractor_exp:
 
-    Used for deterministic (bitwise) output. This parameter is not presented in the `cpu` version since the implementation always produces deterministic output.
+    Used for deterministic (bitwise) output. This parameter is not present in the `cpu` version since the implementation always produces deterministic output.
 
     [Pre-rounding](https://ieeexplore.ieee.org/document/6545904) is employed for associative floating-point summation.
 
@@ -151,28 +147,30 @@ GPU memory consumptions:
 ## Compilation on Linux
 
 ### Standard version
-- g++ 11 (or higher) is required to compile `source.cpp`, while nvcc 11.3 only supports g++ 10 or older.
+- g++ 11 (or higher) and nvcc 11.4.1 is required.
 
 - Unused nvcc flags may be removed. [Documentation for -gencode](https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/index.html#options-for-steering-gpu-code-generation-generate-code)
 
 ```
 cd source
 
-nvcc kernel.cu -o kernel.o -c --use_fast_math --std=c++17 -gencode arch=compute_50,code=\"sm_50,compute_50\" -gencode arch=compute_52,code=sm_52 -gencode arch=compute_61,code=sm_61 -gencode arch=compute_75,code=sm_75 -gencode arch=compute_86,code=\"sm_86,compute_86\" -t 0 --compiler-bindir g++-10
+nvcc kernel.cu -o kernel.o -c --use_fast_math --std=c++17 -gencode arch=compute_50,code=\"sm_50,compute_50\" -gencode arch=compute_52,code=sm_52 -gencode arch=compute_61,code=sm_61 -gencode arch=compute_75,code=sm_75 -gencode arch=compute_86,code=\"sm_86,compute_86\" -t 0
 
-g++-11 source.cpp kernel.o -o libbm3dcuda.so -shared -fPIC -I/usr/local/cuda-11.3/include -L/usr/local/cuda-11.3/lib64 -lcudart_static --std=c++20 -march=native -O3
+g++-11 source.cpp kernel.o -o libbm3dcuda.so -shared -fPIC -I/usr/local/cuda-11.4/include -L/usr/local/cuda-11.4/lib64 -lcudart_static --std=c++20 -march=native -O3
 ```
 
 ### RTC version
+- g++ 11 or clang 12 (or higher) is required.
+
 ```
 cd rtc_source
 
-g++-11 source.cpp -o libbm3dcuda_rtc.so -shared -fPIC -I /usr/local/cuda-11.3/include -L /usr/local/cuda-11.3/lib64 -lnvrtc -lcuda -Wl,-rpath,/usr/local/cuda-11.3/lib64 --std=c++20 -march=native -O3
+g++-11 source.cpp -o libbm3dcuda_rtc.so -shared -fPIC -I /usr/local/cuda-11.4/include -L /usr/local/cuda-11.4/lib64 -lnvrtc -lcuda -Wl,-rpath,/usr/local/cuda-11.4/lib64 --std=c++20 -march=native -O3
 ```
 
 ### CPU version
 ```
 cd cpu_source
 
-g++ source.cpp -o libbm3dcpu.so -shared -fPIC --std=c++17 -march=native -O3
+g++ source.cpp -o libbm3dcpu.so -shared -fPIC --std=c++17 -march=native -O3 -ffast-math
 ```
