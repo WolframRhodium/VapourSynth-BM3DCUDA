@@ -48,6 +48,8 @@ extern cudaGraphExec_t get_graphexec(
     bool final_, float extractor
 ) noexcept;
 
+#define PLUGIN_NS "com.wolframrhodium.bm3dcuda"
+
 #define checkError(expr) do {                                            \
     if (cudaError_t result = expr; result != cudaSuccess) [[unlikely]] { \
         const char * error_str = cudaGetErrorString(result);             \
@@ -211,18 +213,16 @@ static void VS_CC BM3DInit(
     BM3DData * d = static_cast<BM3DData *>(*instanceData);
 
     if (d->radius) {
+        VSVideoInfo vi = *d->vi;
         if (d->unsafe) {
             // returns a signal
-            VSVideoInfo vi = *d->vi;
             vi.format = vsapi->getFormatPreset(pfGray8, core);
             vi.width = 1;
             vi.height = 1;
-            vsapi->setVideoInfo(&vi, 1, node);
         } else {
-            VSVideoInfo vi = *d->vi;
             vi.height *= 2 * (2 * d->radius + 1);
-            vsapi->setVideoInfo(&vi, 1, node);
         }
+        vsapi->setVideoInfo(&vi, 1, node);
     } else {
         vsapi->setVideoInfo(d->vi, 1, node);
     }
@@ -232,8 +232,6 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
     int n, int activationReason, void **instanceData, void **frameData,
     VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi
 ) noexcept {
-
-    using freeFrame_t = decltype(vsapi->freeFrame);
 
     auto d = static_cast<BM3DData *>(*instanceData);
 
@@ -268,6 +266,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
         bool final_ = d->final_;
         int num_input_frames = temporal_width * (final_ ? 2 : 1); // including ref
 
+        using freeFrame_t = decltype(vsapi->freeFrame);
         const std::vector srcs = [&](){
             std::vector<std::unique_ptr<const VSFrameRef, const freeFrame_t &>> temp;
 
@@ -827,7 +826,7 @@ static void VS_CC BM3DCreate(
         vsapi->propSetNode(args, "clip", d->node, paReplace);
 
         VSMap * ret = vsapi->invoke(
-            vsapi->getPluginById("com.wolframrhodium.bm3dcuda", core),
+            vsapi->getPluginById(PLUGIN_NS, core),
             "MakeBuffer", args);
 
         auto uncached_buffer_node = vsapi->propGetNode(ret, "clip", 0, nullptr);
@@ -869,7 +868,7 @@ static void VS_CC BM3DCreate(
         vsapi->propSetIntArray(args, "process", process, std::ssize(process));
 
         VSMap * ret = vsapi->invoke(
-            vsapi->getPluginById("com.wolframrhodium.bm3dcuda", core),
+            vsapi->getPluginById(PLUGIN_NS, core),
             "VAggregate", args);
         vsapi->freeMap(args);
 
@@ -880,6 +879,76 @@ static void VS_CC BM3DCreate(
     }
 
     [[maybe_unused]] auto _ = d.release();
+}
+
+typedef struct {
+    std::unique_ptr<const VSVideoInfo> out_vi;
+} MakeBufferData;
+
+static void VS_CC MakeBufferInit(
+    VSMap *in, VSMap *out, void **instanceData,
+    VSNode *node, VSCore *core, const VSAPI *vsapi
+) {
+
+    auto d = static_cast<MakeBufferData *>(*instanceData);
+    vsapi->setVideoInfo(d->out_vi.get(), 1, node);
+}
+
+static const VSFrameRef *VS_CC MakeBufferGetFrame(
+    int n, int activationReason, void **instanceData, void **frameData,
+    VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi
+) {
+
+    auto d = static_cast<MakeBufferData *>(*instanceData);
+
+    if (activationReason == arInitial) {
+        auto dst = vsapi->newVideoFrame(
+            d->out_vi->format, d->out_vi->width, d->out_vi->height,
+            nullptr, core);
+
+        for (int plane = 0; plane < d->out_vi->format->numPlanes; ++plane) {
+            auto dstp = vsapi->getWritePtr(dst, plane);
+            auto height = vsapi->getFrameHeight(dst, plane);
+            auto pitch = vsapi->getStride(dst, plane);
+            memset(dstp, 0, height * pitch);
+        }
+
+        return dst;
+    }
+
+    return nullptr;
+}
+
+static void VS_CC MakeBufferFree(
+    void *instanceData, VSCore *core, const VSAPI *vsapi
+) {
+
+    auto d = static_cast<MakeBufferData *>(instanceData);
+
+    delete d;
+}
+
+static void VS_CC MakeBufferCreate(
+    const VSMap *in, VSMap *out, void *userData,
+    VSCore *core, const VSAPI *vsapi
+) {
+
+    auto d = std::make_unique<MakeBufferData>();
+
+    auto node = vsapi->propGetNode(in, "clip", 0, nullptr);
+
+    auto vi = std::make_unique<VSVideoInfo>(*vsapi->getVideoInfo(node));
+    vi->height *= 2;
+    d->out_vi = std::move(vi);
+
+    vsapi->freeNode(node);
+
+    vsapi->createFilter(
+        in, out,
+        "MakeBuffer",
+        MakeBufferInit, MakeBufferGetFrame, MakeBufferFree,
+        fmParallel,
+        0, d.release(), core);
 }
 
 struct VAggregateData {
@@ -995,90 +1064,14 @@ static void VS_CC VAggregateCreate(
     );
 }
 
-typedef struct {
-    std::unique_ptr<const VSVideoInfo> out_vi;
-} MakeBufferData;
-
-static void VS_CC MakeBufferInit(
-    VSMap *in, VSMap *out, void **instanceData,
-    VSNode *node, VSCore *core, const VSAPI *vsapi
-) {
-
-    auto d = static_cast<MakeBufferData *>(*instanceData);
-    vsapi->setVideoInfo(d->out_vi.get(), 1, node);
-}
-
-static const VSFrameRef *VS_CC MakeBufferGetFrame(
-    int n, int activationReason, void **instanceData, void **frameData,
-    VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi
-) {
-
-    auto d = static_cast<MakeBufferData *>(*instanceData);
-
-    if (activationReason == arInitial) {
-        auto dst = vsapi->newVideoFrame(
-            d->out_vi->format, d->out_vi->width, d->out_vi->height,
-            nullptr, core);
-       
-        for (int plane = 0; plane < d->out_vi->format->numPlanes; ++plane) {
-            auto dstp = vsapi->getWritePtr(dst, plane);
-            auto height = vsapi->getFrameHeight(dst, plane);
-            auto pitch = vsapi->getStride(dst, plane);
-            memset(dstp, 0, height * pitch);
-        }
-
-        return dst;
-    }
-
-    return nullptr;
-}
-
-static void VS_CC MakeBufferFree(
-    void *instanceData, VSCore *core, const VSAPI *vsapi
-) {
-
-    auto d = static_cast<MakeBufferData *>(instanceData);
-
-    delete d;
-}
-
-static void VS_CC MakeBufferCreate(
-    const VSMap *in, VSMap *out, void *userData,
-    VSCore *core, const VSAPI *vsapi
-) {
-
-    auto d = std::make_unique<MakeBufferData>();
-
-    auto node = vsapi->propGetNode(in, "clip", 0, nullptr);
-
-    auto vi = std::make_unique<VSVideoInfo>(*vsapi->getVideoInfo(node));
-    vi->height *= 2;
-    d->out_vi = std::move(vi);
-
-    vsapi->freeNode(node);
-
-    vsapi->createFilter(
-        in, out,
-        "MakeBuffer",
-        MakeBufferInit, MakeBufferGetFrame, MakeBufferFree,
-        fmParallel,
-        0, d.release(), core);
-}
-
 VS_EXTERNAL_API(void) VapourSynthPluginInit(
     VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin
 ) {
 
     configFunc(
-        "com.wolframrhodium.bm3dcuda", "bm3dcuda",
+        PLUGIN_NS, "bm3dcuda",
         "BM3D algorithm implemented in CUDA",
         VAPOURSYNTH_API_VERSION, 1, plugin
-    );
-
-    registerFunc(
-        "MakeBuffer",
-        "clip:clip;",
-        MakeBufferCreate, nullptr, plugin
     );
 
     registerFunc("BM3D",
@@ -1096,6 +1089,12 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
         "extractor_exp:int:opt;"
         "unsafe:int:opt;",
         BM3DCreate, nullptr, plugin
+    );
+
+    registerFunc(
+        "MakeBuffer",
+        "clip:clip;",
+        MakeBufferCreate, nullptr, plugin
     );
 
     registerFunc("VAggregate",
