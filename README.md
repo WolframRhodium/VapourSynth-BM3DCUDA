@@ -109,7 +109,14 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
 
 - `bm3d.VAggregate` should be called after temporal filtering, as in `VapourSynth-BM3D`.
 
-- The `_rtc` version has three experimental parameters:
+- The standard version and the `_rtc` version has an experimental parameter:
+    - unsafe: (bool)
+
+        Performs unsafe memory optimization that reduce memory consumption of V-BM3D. It is generally non-deterministic and is in conflict with parameter `extractor_exp`.
+
+        Default to false.
+
+- The `_rtc` version has three additional experimental parameters:
 
     - bm_error_s: (string)
 
