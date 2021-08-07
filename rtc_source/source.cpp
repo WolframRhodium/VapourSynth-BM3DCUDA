@@ -675,8 +675,10 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         );
                     }
                 }
+
+                h_dst += d_stride * height * 2 * temporal_width;
             }
-        } else {
+        } else { // !d->chroma
             for (int plane = 0; plane < d->vi->format->numPlanes; plane++) {
                 if (!d->process[plane]) {
                     continue;
