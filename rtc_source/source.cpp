@@ -60,7 +60,7 @@
 
 using namespace std::string_literals;
 
-#define PLUGIN_NS "com.wolframrhodium.bm3dcuda_rtc"
+#define PLUGIN_ID "com.wolframrhodium.bm3dcuda_rtc"
 
 #define checkError(expr) do {                                                         \
     if (CUresult result = expr; result != CUDA_SUCCESS) [[unlikely]] {                \
@@ -764,7 +764,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             // returns a signal
             auto ret = vsapi->newVideoFrame(
                 vsapi->getFormatPreset(pfGray8, core),
-                1, 1, nullptr, core);
+                1, 1, src, core);
 
             return ret;
         } else {
@@ -1206,7 +1206,7 @@ static void VS_CC BM3DCreate(
         vsapi->propSetNode(args, "clip", d->node, paReplace);
 
         VSMap * ret = vsapi->invoke(
-            vsapi->getPluginById(PLUGIN_NS, core),
+            vsapi->getPluginById(PLUGIN_ID, core),
             "MakeBuffer", args);
 
         auto uncached_buffer_node = vsapi->propGetNode(ret, "clip", 0, nullptr);
@@ -1237,9 +1237,26 @@ static void VS_CC BM3DCreate(
     );
 
     if (radius && unsafe) {
-        auto signal_node = vsapi->propGetNode(out, "clip", 0, nullptr);
+        auto uncached_signal_node = vsapi->propGetNode(out, "clip", 0, nullptr);
 
         VSMap * args = vsapi->createMap();
+
+        vsapi->propSetNode(args, "clip", uncached_signal_node, paReplace);
+        vsapi->freeNode(uncached_signal_node);
+
+        VSMap * ret = vsapi->invoke(
+            vsapi->getPluginById("com.vapoursynth.std", core),
+            "Cache", args);
+
+        if (auto error = vsapi->getError(ret); error) {
+            vsapi->freeMap(args);
+            vsapi->freeMap(ret);
+            return set_error(error);
+        }
+
+        auto signal_node = vsapi->propGetNode(ret, "clip", 0, nullptr);
+        vsapi->freeMap(ret);
+
         vsapi->propSetNode(args, "clip", d->buffer_node, paReplace);
         vsapi->propSetNode(args, "signal", signal_node, paReplace);
         vsapi->freeNode(signal_node);
@@ -1247,8 +1264,8 @@ static void VS_CC BM3DCreate(
         int64_t process [] { d->process[0], d->process[1], d->process[2] };
         vsapi->propSetIntArray(args, "process", process, std::ssize(process));
 
-        VSMap * ret = vsapi->invoke(
-            vsapi->getPluginById(PLUGIN_NS, core),
+        ret = vsapi->invoke(
+            vsapi->getPluginById(PLUGIN_ID, core),
             "VAggregate", args);
         vsapi->freeMap(args);
 
@@ -1449,7 +1466,7 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
 ) {
 
     configFunc(
-        PLUGIN_NS, "bm3dcuda_rtc",
+        PLUGIN_ID, "bm3dcuda_rtc",
         "BM3D algorithm implemented in CUDA (NVRTC)",
         VAPOURSYNTH_API_VERSION, 1, plugin
     );

@@ -34,7 +34,7 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
 
 - clip:
 
-    The input clip. Must be of 32 bit float format. Each plane is denoised separately if `chroma` is set to `False`. Data of unprocessed planes is undefined.
+    The input clip. Must be of 32 bit float format. Each plane is denoised separately if `chroma` is set to `False`. Data of unprocessed planes is undefined. Frame properties of the output clip are copied from it.
 
 - ref:
 
