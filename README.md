@@ -34,7 +34,7 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
 
 - clip:
 
-    The input clip. Must be of 32 bit float format. Each plane is denoised separately if `chroma` is set to `False`.
+    The input clip. Must be of 32 bit float format. Each plane is denoised separately if `chroma` is set to `False`. Data of unprocessed planes is undefined.
 
 - ref:
 
@@ -110,9 +110,11 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
 - `bm3d.VAggregate` should be called after temporal filtering, as in `VapourSynth-BM3D`.
 
 - The standard version and the `_rtc` version has an experimental parameter:
-    - unsafe: (bool)
+    - **_unsafe_**: (bool)
 
-        Performs unsafe memory optimization that reduce memory consumption of V-BM3D. It is generally non-deterministic and is in conflict with parameter `extractor_exp`.
+        Performs unsafe memory optimization that reduces memory consumption of V-BM3D. It is generally non-deterministic and is in conflict with parameter `extractor_exp`.
+
+        `bm3d.VAggregate` **is not required to be called explicitly in this mode**, as it is handled by the plugin itself.
 
         Default to false.
 
