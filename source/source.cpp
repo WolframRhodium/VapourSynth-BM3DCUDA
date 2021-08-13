@@ -48,8 +48,6 @@ extern cudaGraphExec_t get_graphexec(
     bool final_, float extractor
 ) noexcept;
 
-#define PLUGIN_ID "com.wolframrhodium.bm3dcuda"
-
 #define checkError(expr) do {                                            \
     if (cudaError_t result = expr; result != cudaSuccess) [[unlikely]] { \
         const char * error_str = cudaGetErrorString(result);             \
@@ -162,28 +160,7 @@ struct BM3DData {
     ticket_semaphore semaphore;
     std::unique_ptr<std::atomic_flag[]> resource_locks;
     std::vector<CUDA_Resource> resources;
-
-    bool unsafe;
-    // only used by unsafe=true:
-    std::unique_ptr<std::atomic_flag[]> frame_locks; // write lock
-    VSNodeRef * buffer_node;
 };
-
-static inline void Accumulation(
-    float * VS_RESTRICT dstp, int dst_stride,
-    const float * VS_RESTRICT srcp, int src_stride,
-    int width, int height
-) noexcept {
-
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            dstp[x] += srcp[x];
-        }
-
-        dstp += dst_stride;
-        srcp += src_stride;
-    }
-}
 
 static inline void Aggregation(
     float * VS_RESTRICT dstp, int dst_stride,
@@ -214,14 +191,7 @@ static void VS_CC BM3DInit(
 
     if (d->radius) {
         VSVideoInfo vi = *d->vi;
-        if (d->unsafe) {
-            // returns a signal
-            vi.format = vsapi->getFormatPreset(pfGray8, core);
-            vi.width = 1;
-            vi.height = 1;
-        } else {
-            vi.height *= 2 * (2 * d->radius + 1);
-        }
+        vi.height *= 2 * (2 * d->radius + 1);
         vsapi->setVideoInfo(&vi, 1, node);
     } else {
         vsapi->setVideoInfo(d->vi, 1, node);
@@ -245,11 +215,6 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
         if (d->final_) {
             for (int i = start_frame; i <= end_frame; ++i) {
                 vsapi->requestFrameFilter(i, d->ref_node, frameCtx);
-            }
-        }
-        if (d->radius && d->unsafe) {
-            for (int i = start_frame; i <= end_frame; ++i) {
-                vsapi->requestFrameFilter(i, d->buffer_node, frameCtx);
             }
         }
     } else if (activationReason == arAllFramesReady) {
@@ -295,29 +260,14 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
 
         const VSFrameRef * src = srcs[radius + (final_ ? temporal_width : 0)].get();
 
-        std::vector<std::unique_ptr<VSFrameRef, const freeFrame_t &>> dsts;
+        std::unique_ptr<VSFrameRef, const freeFrame_t &> dst { nullptr, vsapi->freeFrame };
         if (radius) {
-            if (d->unsafe) {
-                dsts.reserve(temporal_width);
-
-                for (int i = -radius; i <= radius; ++i) {
-                    int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
-                    dsts.emplace_back(
-                        const_cast<VSFrameRef *>(
-                            vsapi->getFrameFilter(clamped_n, d->buffer_node, frameCtx)
-                        ),
-                        vsapi->freeFrame
-                    ); // accumulated into input buffer
-                }
-            } else {
-                dsts.emplace_back(
-                    vsapi->newVideoFrame(
-                        d->vi->format, d->vi->width,
-                        d->vi->height * 2 * temporal_width,
-                        src, core),
-                    vsapi->freeFrame
-                );
-            }
+            dst.reset(
+                vsapi->newVideoFrame(
+                    d->vi->format, d->vi->width,
+                    d->vi->height * 2 * temporal_width,
+                    src, core)
+            );
         } else {
             const VSFrameRef * fr[] = {
                 d->process[0] ? nullptr : src,
@@ -326,11 +276,10 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             };
             const int pl[] = { 0, 1, 2 };
 
-            dsts.emplace_back(
+            dst.reset(
                 vsapi->newVideoFrame2(
                     d->vi->format, d->vi->width,
-                    d->vi->height, fr, pl, src, core),
-                vsapi->freeFrame
+                    d->vi->height, fr, pl, src, core)
             );
         }
 
@@ -399,42 +348,20 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                     continue;
                 }
 
-                if (radius && d->unsafe) {
-                    for (int i = 0; i < temporal_width; ++i) {
-                        auto frame_lock_idx = std::clamp(
-                            n - radius + i, 0, d->vi->numFrames - 1);
-                        auto & frame_lock = d->frame_locks[frame_lock_idx];
-                        while (frame_lock.test_and_set(std::memory_order::acquire)) {
-                            frame_lock.wait(true, std::memory_order::relaxed);
-                        }
+                float * dstp = reinterpret_cast<float *>(
+                    vsapi->getWritePtr(dst.get(), plane));
 
-                        auto dstp = reinterpret_cast<float *>(
-                            vsapi->getWritePtr(dsts[i].get(), plane));
-
-                        Accumulation(
-                            dstp, s_stride,
-                            &h_dst[i * 2 * height * d_stride], d_stride,
-                            width, 2 * height);
-
-                        frame_lock.clear(std::memory_order::release);
-                        frame_lock.notify_one();
-                    }
+                if (radius) {
+                    vs_bitblt(
+                        dstp, s_pitch, h_dst, d_pitch,
+                        width_bytes, height * 2 * temporal_width
+                    );
                 } else {
-                    float * dstp = reinterpret_cast<float *>(
-                        vsapi->getWritePtr(dsts[0].get(), plane));
-
-                    if (radius) {
-                        vs_bitblt(
-                            dstp, s_pitch, h_dst, d_pitch,
-                            width_bytes, height * 2 * temporal_width
-                        );
-                    } else {
-                        Aggregation(
-                            dstp, s_stride,
-                            h_dst, d_stride,
-                            width, height
-                        );
-                    }
+                    Aggregation(
+                        dstp, s_stride,
+                        h_dst, d_stride,
+                        width, height
+                    );
                 }
 
                 h_dst += d_stride * height * 2 * temporal_width;
@@ -467,42 +394,20 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
 
                 checkError(cudaStreamSynchronize(stream));
 
-                if (radius && d->unsafe) {
-                    for (int i = 0; i < temporal_width; ++i) {
-                        auto frame_lock_idx = std::clamp(
-                            n - radius + i, 0, d->vi->numFrames - 1);
-                        auto & frame_lock = d->frame_locks[frame_lock_idx];
-                        while (frame_lock.test_and_set(std::memory_order::acquire)) {
-                            frame_lock.wait(true, std::memory_order::relaxed);
-                        }
+                float * dstp = reinterpret_cast<float *>(
+                    vsapi->getWritePtr(dst.get(), plane));
 
-                        auto dstp = reinterpret_cast<float *>(
-                            vsapi->getWritePtr(dsts[i].get(), plane));
-
-                        Accumulation(
-                            dstp, s_stride,
-                            &h_res[i * 2 * height * d_stride], d_stride,
-                            width, 2 * height);
-
-                        frame_lock.clear(std::memory_order::release);
-                        frame_lock.notify_one();
-                    }
+                if (radius) {
+                    vs_bitblt(
+                        dstp, s_pitch, h_res, d_pitch,
+                        width_bytes, height * 2 * temporal_width
+                    );
                 } else {
-                    float * dstp = reinterpret_cast<float *>(
-                        vsapi->getWritePtr(dsts[0].get(), plane));
-
-                    if (radius) {
-                        vs_bitblt(
-                            dstp, s_pitch, h_res, d_pitch,
-                            width_bytes, height * 2 * temporal_width
-                        );
-                    } else {
-                        Aggregation(
-                            dstp, s_stride,
-                            h_res, d_stride,
-                            width, height
-                        );
-                    }
+                    Aggregation(
+                        dstp, s_stride,
+                        h_res, d_stride,
+                        width, height
+                    );
                 }
             }
         }
@@ -512,8 +417,8 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
         }
         d->semaphore.release();
 
-        if (radius && !d->unsafe) {
-            VSMap * dst_prop { vsapi->getFramePropsRW(dsts[0].get()) };
+        if (radius) {
+            VSMap * dst_prop { vsapi->getFramePropsRW(dst.get()) };
 
             vsapi->propSetInt(dst_prop, "BM3D_V_radius", d->radius, paReplace);
 
@@ -521,16 +426,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             vsapi->propSetIntArray(dst_prop, "BM3D_V_process", process, 3);
         }
 
-        if (radius && d->unsafe) {
-            // returns a signal
-            auto ret = vsapi->newVideoFrame(
-                vsapi->getFormatPreset(pfGray8, core),
-                1, 1, src, core);
-
-            return ret;
-        } else {
-            return dsts[0].release();
-        }
+        return dst.release();
     }
 
     return nullptr;
@@ -544,7 +440,6 @@ static void VS_CC BM3DFree(
 
     vsapi->freeNode(d->node);
     vsapi->freeNode(d->ref_node);
-    vsapi->freeNode(d->buffer_node);
 
     cudaSetDevice(d->device_id);
 
@@ -562,7 +457,6 @@ static void VS_CC BM3DCreate(
         vsapi->setError(out, ("BM3D: " + error_message).c_str());
         vsapi->freeNode(d->node);
         vsapi->freeNode(d->ref_node);
-        vsapi->freeNode(d->buffer_node);
     };
 
     d->node = vsapi->propGetNode(in, "clip", 0, nullptr);
@@ -725,21 +619,6 @@ static void VS_CC BM3DCreate(
         return (temp ? std::ldexp(1.0f, temp) : 0.0f);
     }();
 
-    bool unsafe = !!vsapi->propGetInt(in, "unsafe", 0, &error);
-    if (error) {
-        unsafe = false;
-    }
-    if (unsafe) {
-        if (radius == 0) {
-            return set_error("spatial denoising is always safe");
-        }
-        if (extractor != 0.0f) {
-            return set_error("unsafe mode is not deterministic");
-        }
-        d->frame_locks = std::make_unique<std::atomic_flag[]>(d->vi->numFrames);
-    }
-    d->unsafe = unsafe;
-
     // GPU resource allocation
     {
         d->semaphore.current.store(num_copy_engines - 1, std::memory_order::relaxed);
@@ -821,246 +700,9 @@ static void VS_CC BM3DCreate(
         }
     }
 
-    if (radius && unsafe) {
-        VSMap * args = vsapi->createMap();
-        vsapi->propSetNode(args, "clip", d->node, paReplace);
-
-        VSMap * ret = vsapi->invoke(
-            vsapi->getPluginById(PLUGIN_ID, core),
-            "MakeBuffer", args);
-
-        auto uncached_buffer_node = vsapi->propGetNode(ret, "clip", 0, nullptr);
-        vsapi->freeMap(ret);
-
-        vsapi->propSetNode(args, "clip", uncached_buffer_node, paReplace);
-        vsapi->freeNode(uncached_buffer_node);
-
-        ret = vsapi->invoke(
-            vsapi->getPluginById("com.vapoursynth.std", core),
-            "Cache", args);
-
-        vsapi->freeMap(args);
-
-        if (auto error = vsapi->getError(ret); error) {
-            vsapi->freeMap(ret);
-            return set_error(error);
-        }
-
-        d->buffer_node = vsapi->propGetNode(ret, "clip", 0, nullptr);
-        vsapi->freeMap(ret);
-    }
-
     vsapi->createFilter(
         in, out, "BM3D",
         BM3DInit, BM3DGetFrame, BM3DFree,
-        fmParallel, 0, d.get(), core
-    );
-
-    if (radius && unsafe) {
-        auto signal_node = vsapi->propGetNode(out, "clip", 0, nullptr);
-
-        VSMap * args = vsapi->createMap();
-
-        vsapi->propSetNode(args, "clip", d->buffer_node, paReplace);
-        vsapi->propSetNode(args, "signal", signal_node, paReplace);
-        vsapi->freeNode(signal_node);
-        vsapi->propSetInt(args, "radius", d->radius, paReplace);
-        int64_t process [] { d->process[0], d->process[1], d->process[2] };
-        vsapi->propSetIntArray(args, "process", process, std::ssize(process));
-
-        VSMap * ret = vsapi->invoke(
-            vsapi->getPluginById(PLUGIN_ID, core),
-            "VAggregate", args);
-        vsapi->freeMap(args);
-
-        auto ret_node = vsapi->propGetNode(ret, "clip", 0, nullptr);
-        vsapi->propSetNode(out, "clip", ret_node, paReplace);
-        vsapi->freeNode(ret_node);
-        vsapi->freeMap(ret);
-    }
-
-    [[maybe_unused]] auto _ = d.release();
-}
-
-typedef struct {
-    std::unique_ptr<const VSVideoInfo> out_vi;
-} MakeBufferData;
-
-static void VS_CC MakeBufferInit(
-    VSMap *in, VSMap *out, void **instanceData,
-    VSNode *node, VSCore *core, const VSAPI *vsapi
-) {
-
-    auto d = static_cast<MakeBufferData *>(*instanceData);
-    vsapi->setVideoInfo(d->out_vi.get(), 1, node);
-}
-
-static const VSFrameRef *VS_CC MakeBufferGetFrame(
-    int n, int activationReason, void **instanceData, void **frameData,
-    VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi
-) {
-
-    auto d = static_cast<MakeBufferData *>(*instanceData);
-
-    if (activationReason == arInitial) {
-        auto dst = vsapi->newVideoFrame(
-            d->out_vi->format, d->out_vi->width, d->out_vi->height,
-            nullptr, core);
-
-        for (int plane = 0; plane < d->out_vi->format->numPlanes; ++plane) {
-            auto dstp = vsapi->getWritePtr(dst, plane);
-            auto height = vsapi->getFrameHeight(dst, plane);
-            auto pitch = vsapi->getStride(dst, plane);
-            memset(dstp, 0, height * pitch);
-        }
-
-        return dst;
-    }
-
-    return nullptr;
-}
-
-static void VS_CC MakeBufferFree(
-    void *instanceData, VSCore *core, const VSAPI *vsapi
-) {
-
-    auto d = static_cast<MakeBufferData *>(instanceData);
-
-    delete d;
-}
-
-static void VS_CC MakeBufferCreate(
-    const VSMap *in, VSMap *out, void *userData,
-    VSCore *core, const VSAPI *vsapi
-) {
-
-    auto d = std::make_unique<MakeBufferData>();
-
-    auto node = vsapi->propGetNode(in, "clip", 0, nullptr);
-
-    auto vi = std::make_unique<VSVideoInfo>(*vsapi->getVideoInfo(node));
-    vi->height *= 2;
-    d->out_vi = std::move(vi);
-
-    vsapi->freeNode(node);
-
-    vsapi->createFilter(
-        in, out,
-        "MakeBuffer",
-        MakeBufferInit, MakeBufferGetFrame, MakeBufferFree,
-        fmParallel,
-        0, d.release(), core);
-}
-
-struct VAggregateData {
-    VSNodeRef * node;
-    VSNodeRef * signal_node;
-    const VSVideoInfo * in_vi;
-    int radius;
-    bool process[3];
-};
-
-static void VS_CC VAggregateInit(
-    VSMap *in, VSMap *out, void **instanceData, VSNode *node,
-    VSCore *core, const VSAPI *vsapi
-) noexcept {
-
-    VAggregateData * d = static_cast<VAggregateData *>(*instanceData);
-
-    auto vi = *d->in_vi;
-    vi.height /= 2;
-    vsapi->setVideoInfo(&vi, 1, node);
-}
-
-static const VSFrameRef *VS_CC VAggregateGetFrame(
-    int n, int activationReason, void **instanceData, void **frameData,
-    VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi
-) noexcept {
-
-    using freeFrame_t = decltype(vsapi->freeFrame);
-
-    auto d = static_cast<VAggregateData *>(*instanceData);
-
-    if (activationReason == arInitial) {
-        int start_frame = std::max(n - d->radius, 0);
-        int end_frame = std::min(n + d->radius, d->in_vi->numFrames - 1);
-
-        for (int i = start_frame; i <= end_frame; ++i) {
-            vsapi->requestFrameFilter(i, d->signal_node, frameCtx);
-        }
-        vsapi->requestFrameFilter(n, d->node, frameCtx);
-    } else if (activationReason == arAllFramesReady) {
-        std::unique_ptr<const VSFrameRef, const freeFrame_t &> src {
-            vsapi->getFrameFilter(n, d->node, frameCtx),
-            vsapi->freeFrame
-        };
-
-        VSFrameRef * dst = [&](){
-            int width = d->in_vi->width;
-            int height = d->in_vi->height / 2;
-            auto prop_frame = vsapi->getFrameFilter(n, d->signal_node, frameCtx);
-            auto temp = vsapi->newVideoFrame(
-                d->in_vi->format, width, height, prop_frame, core);
-            vsapi->freeFrame(prop_frame);
-            return temp;
-        }();
-
-        for (int plane = 0; plane < d->in_vi->format->numPlanes; ++plane) {
-            if (!d->process[plane]) {
-                continue;
-            }
-
-            int width = vsapi->getFrameWidth(src.get(), plane);
-            int height = vsapi->getFrameHeight(src.get(), plane) / 2;
-            int stride = vsapi->getStride(src.get(), plane) / sizeof(float);
-
-            const float * srcp = reinterpret_cast<const float *>(
-                vsapi->getReadPtr(src.get(), plane));
-            float * dstp = reinterpret_cast<float *>(
-                vsapi->getWritePtr(dst, plane));
-            Aggregation(dstp, stride, srcp, stride, width, height);
-        }
-
-        return dst;
-    }
-
-    return nullptr;
-}
-
-static void VS_CC VAggregateFree(
-    void *instanceData, VSCore *core, const VSAPI *vsapi
-) noexcept {
-
-    auto d = static_cast<VAggregateData *>(instanceData);
-
-    vsapi->freeNode(d->node);
-    vsapi->freeNode(d->signal_node);
-
-    delete d;
-}
-
-static void VS_CC VAggregateCreate(
-    const VSMap *in, VSMap *out, void *userData,
-    VSCore *core, const VSAPI *vsapi
-) noexcept {
-
-    auto d { std::make_unique<VAggregateData>() };
-
-    d->node = vsapi->propGetNode(in, "clip", 0, nullptr);
-    d->in_vi = vsapi->getVideoInfo(d->node);
-
-    d->signal_node = vsapi->propGetNode(in, "signal", 0, nullptr);
-
-    d->radius = int64ToIntS(vsapi->propGetInt(in, "radius", 0, nullptr));
-
-    auto process = vsapi->propGetIntArray(in, "process", nullptr);
-    for (int i = 0; i < std::ssize(d->process); ++i) {
-        d->process[i] = !!process[i];
-    }
-
-    vsapi->createFilter(
-        in, out, "VAggregate",
-        VAggregateInit, VAggregateGetFrame, VAggregateFree,
         fmParallel, 0, d.release(), core
     );
 }
@@ -1070,7 +712,7 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
 ) {
 
     configFunc(
-        PLUGIN_ID, "bm3dcuda",
+        "com.wolframrhodium.bm3dcuda", "bm3dcuda",
         "BM3D algorithm implemented in CUDA",
         VAPOURSYNTH_API_VERSION, 1, plugin
     );
@@ -1087,22 +729,7 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
         "chroma:int:opt;"
         "device_id:int:opt;"
         "fast:int:opt;"
-        "extractor_exp:int:opt;"
-        "unsafe:int:opt;",
+        "extractor_exp:int:opt;",
         BM3DCreate, nullptr, plugin
-    );
-
-    registerFunc(
-        "MakeBuffer",
-        "clip:clip;",
-        MakeBufferCreate, nullptr, plugin
-    );
-
-    registerFunc("VAggregate",
-        "clip:clip;"
-        "signal:clip;"
-        "radius:int;"
-        "process:int[]:opt;",
-        VAggregateCreate, nullptr, plugin
     );
 }
