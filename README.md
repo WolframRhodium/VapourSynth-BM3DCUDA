@@ -144,33 +144,9 @@ GPU memory consumptions:
 
 `(ref ? 4 : 3) * (chroma ? 3 : 1) * (fast ? 4 : 1) * (2 * radius + 1) * size_of_a_single_frame`
 
-## Compilation on Linux
+## Compilation
+```bash
+cmake -S . -B build -D CMAKE_BUILD_TYPE=Release -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math -Wno-deprecated-gpu-targets" -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86"
 
-### Standard version
-- g++ 11 (or higher) and nvcc 11.4.1 is required.
-
-- Unused nvcc flags may be removed. [Documentation for -gencode](https://docs.nvidia.com/cuda/cuda-compiler-driver-nvcc/index.html#options-for-steering-gpu-code-generation-generate-code)
-
-```
-cd source
-
-nvcc kernel.cu -o kernel.o -c --use_fast_math --std=c++17 -gencode arch=compute_50,code=\"sm_50,compute_50\" -gencode arch=compute_52,code=sm_52 -gencode arch=compute_61,code=sm_61 -gencode arch=compute_75,code=sm_75 -gencode arch=compute_86,code=\"sm_86,compute_86\" -t 0
-
-g++-11 source.cpp kernel.o -o libbm3dcuda.so -shared -fPIC -I/usr/local/cuda-11.4/include -L/usr/local/cuda-11.4/lib64 -lcudart_static --std=c++20 -march=native -O3
-```
-
-### RTC version
-- g++ 11 or clang 12 (or higher) is required.
-
-```
-cd rtc_source
-
-g++-11 source.cpp -o libbm3dcuda_rtc.so -shared -fPIC -I /usr/local/cuda-11.4/include -L /usr/local/cuda-11.4/lib64 -lnvrtc -lcuda -Wl,-rpath,/usr/local/cuda-11.4/lib64 --std=c++20 -march=native -O3
-```
-
-### CPU version
-```
-cd cpu_source
-
-g++ source.cpp -o libbm3dcpu.so -shared -fPIC --std=c++17 -march=native -O3 -ffast-math
+cmake --build build --config Release
 ```

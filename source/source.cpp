@@ -34,8 +34,8 @@
 
 #include <cuda_runtime.h>
 
-#include <vapoursynth/VapourSynth.h>
-#include <vapoursynth/VSHelper.h>
+#include <VapourSynth.h>
+#include <VSHelper.h>
 
 using namespace std::string_literals;
 

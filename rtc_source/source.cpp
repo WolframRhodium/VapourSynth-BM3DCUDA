@@ -43,8 +43,8 @@
 #   include <windows.h>
 #endif
 
-#include <vapoursynth/VapourSynth.h>
-#include <vapoursynth/VSHelper.h>
+#include <VapourSynth.h>
+#include <VSHelper.h>
 
 #include "kernel.hpp"
 
@@ -949,7 +949,7 @@ static void VS_CC BM3DCreate(
 
 #ifdef _WIN64
         const std::string plugin_path =
-            vsapi->getPluginPath(vsapi->getPluginById(PLUGIN_ID, core));
+            vsapi->getPluginPath(vsapi->getPluginById("com.wolframrhodium.bm3dcuda_rtc", core));
         std::string folder_path = plugin_path.substr(0, plugin_path.find_last_of('/'));
         int nvrtc_major, nvrtc_minor;
         nvrtcVersion(&nvrtc_major, &nvrtc_minor);

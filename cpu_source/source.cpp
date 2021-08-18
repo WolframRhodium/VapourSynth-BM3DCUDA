@@ -44,19 +44,19 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <string>
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
-#include "vapoursynth/VapourSynth.h"
-#include "vapoursynth/VSHelper.h"
+#include <VapourSynth.h>
+#include <VSHelper.h>
 
 #include <immintrin.h>
 
@@ -975,8 +975,8 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             }
         }();
 
-        const auto cast_fp = []<typename T>(T * p) {
-            if constexpr (std::is_const_v<T>)
+        const auto cast_fp = [](auto * p) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(p)>, decltype(p)>)
                 return reinterpret_cast<const float *>(p);
             else
                 return reinterpret_cast<float *>(p);
