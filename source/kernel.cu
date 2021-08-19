@@ -39,16 +39,16 @@
 // CUDA GraphExec for BM3D
 cudaGraphExec_t get_graphexec(
     /* shape: [(chroma ? 3 : 1), (2 * radius + 1), 2, height, stride] */
-    float * d_res, 
+    float * d_res,
     /* shape: [(final_ ? 2 : 1), (chroma ? 3 : 1), (2 * radius + 1), height, stride] */
-    float * d_src, 
+    float * d_src,
     /* HtoD shape: [(final_ ? 2 : 1), (chroma ? 3 : 1), (2 * radius + 1), height, stride] */
     /* DtoH shape: [(chroma ? 3 : 1), (2 * radius + 1), 2, height, stride] */
-    float * h_res, 
-    int width, int height, int stride, 
-    float sigma, int block_step, int bm_range, 
-    int radius, int ps_num, int ps_range, 
-    bool chroma, float sigma_u, float sigma_v, 
+    float * h_res,
+    int width, int height, int stride,
+    float sigma, int block_step, int bm_range,
+    int radius, int ps_num, int ps_range,
+    bool chroma, float sigma_u, float sigma_v,
     bool final_, float extractor
 ) noexcept;
 
@@ -327,7 +327,7 @@ static inline float wiener_filtering(
 // launched by blockDim(x=32, y=1, z=1)
 __device__
 static inline float collaborative_wiener(
-    float * __restrict__ denoising_patch, float * __restrict__ ref_patch, 
+    float * __restrict__ denoising_patch, float * __restrict__ ref_patch,
     float sigma, float * __restrict__ buffer
 ) {
 
@@ -370,13 +370,13 @@ __launch_bounds__(32, 32)
 #endif
 static void bm3d(
     /* shape: [(chroma ? 3 : 1), (2 * radius + 1), 2, height, stride] */
-    float * __restrict__ res, 
+    float * __restrict__ res,
     /* shape: [(final_ ? 2 : 1), (chroma ? 3 : 1), (2 * radius + 1), height, stride] */
-    const float * __restrict__ src, 
-    int width, int height, int stride, 
-    float sigma, int block_step, int bm_range, 
-    int _radius, int ps_num, int ps_range, 
-    [[maybe_unused]] float sigma_u, [[maybe_unused]] float sigma_v, 
+    const float * __restrict__ src,
+    int width, int height, int stride,
+    float sigma, int block_step, int bm_range,
+    int _radius, int ps_num, int ps_range,
+    [[maybe_unused]] float sigma_u, [[maybe_unused]] float sigma_v,
     float extractor // used for deteriministic summation
 ) {
 
@@ -418,9 +418,10 @@ static void bm3d(
     }
 
     #if __CUDA_ARCH__ >= 700
-    int membermask = 
-        ((x & -32) >= bm_range && (x & -32) + bm_range <= width - 32) 
-        ? 0xFFFFFFFF 
+    int membermask =
+        ((4 * blockIdx.x * block_step >= bm_range) &&
+         ((4 * blockIdx.x + 3) * block_step <= width - 8 - bm_range))
+        ? 0xFFFFFFFF
         : 0xFF << (lane_id & -8);
     #endif
 
@@ -497,12 +498,12 @@ static void bm3d(
 
             for (int t = 1; t <= radius; ++t) {
                 /*
-                membermask = 
-                    (((x & -32) >= bm_range + t * ps_range) && 
-                     ((x & -32) + bm_range + t * ps_range <= width - 32) && 
-                     (y >= bm_range + t * ps_range) && 
-                     (y + bm_range + t * ps_range <= height - 8)) 
-                    ? 0xFFFFFFFF 
+                membermask =
+                    (((x & -32) >= bm_range + t * ps_range) &&
+                     ((x & -32) + bm_range + t * ps_range <= width - 32) &&
+                     (y >= bm_range + t * ps_range) &&
+                     (y + bm_range + t * ps_range <= height - 8))
+                    ? 0xFFFFFFFF
                     : 0xFF << (lane_id & -8);
                 */
                 int temporal_index = radius + direction * t;
@@ -737,11 +738,11 @@ static void bm3d(
 }
 
 cudaGraphExec_t get_graphexec(
-    float * d_res, float * d_src, float * h_res, 
-    int width, int height, int stride, 
-    float sigma, int block_step, int bm_range, 
-    int radius, int ps_num, int ps_range, 
-    bool chroma, float sigma_u, float sigma_v, bool final_, 
+    float * d_res, float * d_src, float * h_res,
+    int width, int height, int stride,
+    float sigma, int block_step, int bm_range,
+    int radius, int ps_num, int ps_range,
+    bool chroma, float sigma_u, float sigma_v, bool final_,
     float extractor
 ) noexcept {
 
@@ -783,25 +784,25 @@ cudaGraphExec_t get_graphexec(
     {
         cudaGraphNode_t dependencies[] { n_HtoD, n_memset };
 
-        void * kernelArgs[] { 
-            &d_res, &d_src, 
-            &width, &height, &stride, 
-            &sigma, &block_step, &bm_range, 
-            &radius, &ps_num, &ps_range, 
+        void * kernelArgs[] {
+            &d_res, &d_src,
+            &width, &height, &stride,
+            &sigma, &block_step, &bm_range,
+            &radius, &ps_num, &ps_range,
             &sigma_u, &sigma_v, &extractor
         };
 
         cudaKernelNodeParams kernel_params {};
 
         kernel_params.func = reinterpret_cast<void *>(
-            radius ? (chroma ? (final_ ? bm3d<true, true, true> : bm3d<true, true, false>) 
+            radius ? (chroma ? (final_ ? bm3d<true, true, true> : bm3d<true, true, false>)
                              : (final_ ? bm3d<true, false, true> : bm3d<true, false, false>))
-                   : (chroma ? (final_ ? bm3d<false, true, true> : bm3d<false, true, false>) 
+                   : (chroma ? (final_ ? bm3d<false, true, true> : bm3d<false, true, false>)
                              : (final_ ? bm3d<false, false, true> : bm3d<false, false, false>))
         );
 
         kernel_params.gridDim = dim3(
-            (width + (4 * block_step - 1)) / (4 * block_step), 
+            (width + (4 * block_step - 1)) / (4 * block_step),
             (height + (block_step - 1)) / block_step
         );
         kernel_params.blockDim = dim3(32);
@@ -810,8 +811,8 @@ cudaGraphExec_t get_graphexec(
         kernel_params.extra = nullptr;
 
         cudaGraphAddKernelNode(
-            &n_kernel, graph, 
-            dependencies, std::extent_v<decltype(dependencies)>, 
+            &n_kernel, graph,
+            dependencies, std::extent_v<decltype(dependencies)>,
             &kernel_params);
     }
 
@@ -830,8 +831,8 @@ cudaGraphExec_t get_graphexec(
         copy_params.kind = cudaMemcpyDeviceToHost;
 
         cudaGraphAddMemcpyNode(
-            &n_DtoH, graph, 
-            dependencies, std::extent_v<decltype(dependencies)>, 
+            &n_DtoH, graph,
+            dependencies, std::extent_v<decltype(dependencies)>,
             &copy_params);
     }
 

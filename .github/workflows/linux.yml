@@ -1,0 +1,53 @@
+name: Build (Linux)
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-20.04
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+
+    - name: Setup GCC
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y g++-11
+        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 11 --slave /usr/bin/g++ g++ /usr/bin/g++-11 --slave /usr/bin/gcov gcov /usr/bin/gcov-11
+
+    - name: Setup CUDA
+      run: |
+        wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-ubuntu2004.pin
+        sudo mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600
+        sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/7fa2af80.pub
+        sudo add-apt-repository "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/ /"
+        sudo apt-get update
+        sudo apt-get install -y cuda-nvcc-11-4 cuda-cudart-dev-11-4 cuda-nvrtc-dev-11-4
+        echo "PATH=/usr/local/cuda/bin${PATH:+:${PATH}}" >> $GITHUB_ENV
+        echo "CUDA_PATH=/usr/local/cuda" >> $GITHUB_ENV
+        echo "LD_LIBRARY_PATH=/usr/local/cuda/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" >> $GITHUB_ENV
+
+    - name: Download VapourSynth headers
+      run: |
+        wget -q -O vs.zip https://github.com/vapoursynth/vapoursynth/archive/refs/tags/R54.zip
+        unzip -q vs.zip
+        mv vapoursynth*/ vapoursynth
+
+    - name: Configure
+      run: cmake -S . -B build
+        -D VAPOURSYNTH_INCLUDE_DIRECTORY="`pwd`/vapoursynth/include"
+        -D CMAKE_BUILD_TYPE=Release
+        -D CMAKE_CXX_FLAGS_RELEASE="-ffast-math -march=x86-64-v3"
+        -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
+        -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86"
+
+    - name: Build
+      run: cmake --build build --config Release --parallel `nproc` --verbose
+
+    # - name: Upload
+    #  uses: actions/upload-artifact@v2
+    #  with:
+    #    name: VapourSynth-BM3DCUDA-Linux
+    #    path: build/*source/libbm3dcuda*.so

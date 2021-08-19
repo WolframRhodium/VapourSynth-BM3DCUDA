@@ -57,18 +57,18 @@ static inline float ssd_norm(const float [8], const float [8], unsigned int);
 )""";
 
 const auto kernel_source_template = R"""(
-/* 
-external variables: 
-    int width, int height, int stride, 
-    float sigma, int block_step, int bm_range, 
-    int _radius, int ps_num, int ps_range, 
-    float sigma_u, float sigma_v, 
+/*
+external variables:
+    int width, int height, int stride,
+    float sigma, int block_step, int bm_range,
+    int _radius, int ps_num, int ps_range,
+    float sigma_u, float sigma_v,
     bool temporal, bool chroma, bool final_
-    float FLT_MAX, float FLT_EPSILON, 
-    float extractor, 
+    float FLT_MAX, float FLT_EPSILON,
+    float extractor,
     __device__ static inline float bm_error(const float *, const float *)
-    template<bool> __device__ static inline void transform_2d(float [8]), 
-    template<bool> __device__ static inline void transform_1d(float [8]), 
+    template<bool> __device__ static inline void transform_2d(float [8]),
+    template<bool> __device__ static inline void transform_1d(float [8]),
 */
 
 #define FMA(a, b, c) (((a) * (b)) + (c))
@@ -360,7 +360,7 @@ static inline void bior1_5(float v[8]) {
     }
 }
 )""" R"""(
-__device__ 
+__device__
 static inline float reduce_subwarp(float x, unsigned int mask) {
     x += __shfl_xor_sync(mask, x, 1, 8);
     x += __shfl_xor_sync(mask, x, 2, 8);
@@ -371,8 +371,8 @@ static inline float reduce_subwarp(float x, unsigned int mask) {
 
 __device__
 static inline float ssd(
-    const float center[__restrict__ 8], 
-    const float neighbor[__restrict__ 8], 
+    const float center[__restrict__ 8],
+    const float neighbor[__restrict__ 8],
     unsigned int mask
 ) {
     float errors[2] { 0.0f };
@@ -390,8 +390,8 @@ static inline float ssd(
 
 __device__
 static inline float sad(
-    const float center[__restrict__ 8], 
-    const float neighbor[__restrict__ 8], 
+    const float center[__restrict__ 8],
+    const float neighbor[__restrict__ 8],
     unsigned int mask
 ) {
     float errors[2] { 0.0f };
@@ -409,18 +409,18 @@ static inline float sad(
 
 __device__
 static inline float zssd(
-    const float center[__restrict__ 8], 
-    const float neighbor[__restrict__ 8], 
+    const float center[__restrict__ 8],
+    const float neighbor[__restrict__ 8],
     unsigned int mask
 ) {
 
     float center_sum = (
-        ((center[0] + center[1]) + (center[2] + center[3])) + 
+        ((center[0] + center[1]) + (center[2] + center[3])) +
         ((center[4] + center[5]) + (center[6] + center[7])));
     float center_mean = reduce_subwarp(center_sum, mask) * (1.0f / 64.f);
 
     float neighbor_sum = (
-        ((neighbor[0] + neighbor[1]) + (neighbor[2] + neighbor[3])) + 
+        ((neighbor[0] + neighbor[1]) + (neighbor[2] + neighbor[3])) +
         ((neighbor[4] + neighbor[5]) + (neighbor[6] + neighbor[7])));
     float neighbor_mean = reduce_subwarp(neighbor_sum, mask) * (1.0f / 64.f);
 
@@ -439,18 +439,18 @@ static inline float zssd(
 
 __device__
 static inline float zsad(
-    const float center[__restrict__ 8], 
-    const float neighbor[__restrict__ 8], 
+    const float center[__restrict__ 8],
+    const float neighbor[__restrict__ 8],
     unsigned int mask
 ) {
 
     float center_sum = (
-        ((center[0] + center[1]) + (center[2] + center[3])) + 
+        ((center[0] + center[1]) + (center[2] + center[3])) +
         ((center[4] + center[5]) + (center[6] + center[7])));
     float center_mean = reduce_subwarp(center_sum, mask) * (1.0f / 64.f);
 
     float neighbor_sum = (
-        ((neighbor[0] + neighbor[1]) + (neighbor[2] + neighbor[3])) + 
+        ((neighbor[0] + neighbor[1]) + (neighbor[2] + neighbor[3])) +
         ((neighbor[4] + neighbor[5]) + (neighbor[6] + neighbor[7])));
     float neighbor_mean = reduce_subwarp(neighbor_sum, mask) * (1.0f / 64.f);
 
@@ -469,8 +469,8 @@ static inline float zsad(
 
 __device__
 static inline float ssd_norm(
-    const float center[__restrict__ 8], 
-    const float neighbor[__restrict__ 8], 
+    const float center[__restrict__ 8],
+    const float neighbor[__restrict__ 8],
     unsigned int mask
 ) {
 
@@ -583,7 +583,7 @@ static inline float collaborative_hard(
 
     constexpr int stride1 = 1;
     constexpr int stride2 = stride1 * 8;
-    
+  
     #pragma unroll
     for (int ndim = 0; ndim < 2; ++ndim) {
         transform_pack8_interleave4<transform_2d<true>, stride1, 8, stride2>(denoising_patch, buffer);
@@ -649,13 +649,13 @@ static inline float wiener_filtering(
 // launched by blockDim(x=32, y=1, z=1)
 __device__
 static inline float collaborative_wiener(
-    float * __restrict__ denoising_patch, float * __restrict__ ref_patch, 
+    float * __restrict__ denoising_patch, float * __restrict__ ref_patch,
     float sigma, float * __restrict__ buffer
 ) {
 
     constexpr int stride1 = 1;
     constexpr int stride2 = stride1 * 8;
-    
+  
     #pragma unroll
     for (int ndim = 0; ndim < 2; ++ndim) {
         transform_pack8_interleave4<transform_2d<true>, stride1, 8, stride2>(denoising_patch, buffer);
@@ -693,7 +693,7 @@ __launch_bounds__(32, 32)
 #endif
 void bm3d(
     /* shape: [(chroma ? 3 : 1), (2 * radius + 1), 2, height, stride] */
-    float * __restrict__ res, 
+    float * __restrict__ res,
     /* shape: [(final_ ? 2 : 1), (chroma ? 3 : 1), (2 * radius + 1), height, stride] */
     const float * __restrict__ src
 ) {
@@ -736,9 +736,10 @@ void bm3d(
     }
 
     #if __CUDA_ARCH__ >= 700
-    int membermask = 
-        ((x & -32) >= bm_range && (x & -32) + bm_range <= width - 32) 
-        ? 0xFFFFFFFF 
+    int membermask =
+        ((4 * blockIdx.x * block_step >= bm_range) &&
+         ((4 * blockIdx.x + 3) * block_step <= width - 8 - bm_range))
+        ? 0xFFFFFFFF
         : 0xFF << (lane_id & -8);
     #endif
 
@@ -761,7 +762,7 @@ void bm3d(
                 #else
                 auto active_mask = __activemask(); // lock-step execution
                 #endif
-                
+              
                 float neighbor_patch[8];
 
                 #pragma unroll
@@ -808,12 +809,12 @@ void bm3d(
 
             for (int t = 1; t <= radius; ++t) {
                 /*
-                membermask = 
-                    (((x & -32) >= bm_range + t * ps_range) && 
-                     ((x & -32) + bm_range + t * ps_range <= width - 32) && 
-                     (y >= bm_range + t * ps_range) && 
-                     (y + bm_range + t * ps_range <= height - 8)) 
-                    ? 0xFFFFFFFF 
+                membermask =
+                    (((x & -32) >= bm_range + t * ps_range) &&
+                     ((x & -32) + bm_range + t * ps_range <= width - 32) &&
+                     (y >= bm_range + t * ps_range) &&
+                     (y + bm_range + t * ps_range <= height - 8))
+                    ? 0xFFFFFFFF
                     : 0xFF << (lane_id & -8);
                 */
                 int temporal_index = radius + direction * t;

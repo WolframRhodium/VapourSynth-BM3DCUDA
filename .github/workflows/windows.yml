@@ -1,0 +1,52 @@
+name: Build (Windows)
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build-windows:
+    runs-on: windows-2019
+
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Setup CUDA
+      run: |
+        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.4.1/network_installers/cuda_11.4.1_win10_network.exe
+        cuda_installer.exe -s nvcc_11.4 cudart_11.4 nvrtc_dev_11.4 visual_studio_integration_11.4
+
+    - name: Download VapourSynth headers
+      run: |
+        curl -s -o vs.zip -L https://github.com/vapoursynth/vapoursynth/archive/refs/tags/R54.zip
+        unzip -q vs.zip
+        mv vapoursynth-*/ vapoursynth/
+
+    - name: Configure
+      run: cmake -S . -B build -G "Visual Studio 16 2019" -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include"
+        -D CMAKE_CXX_FLAGS_RELEASE="/fp:fast /arch:AVX"
+        -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
+        -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86"
+      env:
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4
+        CUDA_PATH_V11_4: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4
+
+    - name: Build
+      run: cmake --build build --config Release --parallel %NUMBER_OF_PROCESSORS% --verbose
+      env:
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4
+        CUDA_PATH_V11_4: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4
+
+    - name: Upload
+      uses: actions/upload-artifact@v2
+      with:
+        name: VapourSynth-BM3DCUDA-Windows
+        path: build/*source/Release/bm3d*.dll
