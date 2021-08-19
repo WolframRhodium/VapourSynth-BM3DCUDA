@@ -29,6 +29,12 @@ jobs:
         echo "CUDA_PATH=/usr/local/cuda" >> $GITHUB_ENV
         echo "LD_LIBRARY_PATH=/usr/local/cuda/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" >> $GITHUB_ENV
 
+    - name: Download AviSynth+ headers
+      run: |
+        wget -q -O avs+.zip https://github.com/AviSynth/AviSynthPlus/archive/refs/tags/v3.7.0.zip
+        unzip -q avs+.zip
+        mv AviSynthPlus*/ avisynth+
+
     - name: Download VapourSynth headers
       run: |
         wget -q -O vs.zip https://github.com/vapoursynth/vapoursynth/archive/refs/tags/R54.zip
@@ -37,6 +43,9 @@ jobs:
 
     - name: Configure
       run: cmake -S . -B build
+        -D ENABLE_AVISYNTHPLUS=ON
+        -D AVISYNTHPLUS_INCLUDE_DIRECTORY="`pwd`/avisynth+/avs_core/include"
+        -D ENABLE_VAPOURSYNTH=ON
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="`pwd`/vapoursynth/include"
         -D CMAKE_BUILD_TYPE=Release
         -D CMAKE_CXX_FLAGS_RELEASE="-ffast-math -march=x86-64-v3"
@@ -47,7 +56,7 @@ jobs:
       run: cmake --build build --config Release --parallel `nproc` --verbose
 
     # - name: Upload
-    #  uses: actions/upload-artifact@v2
-    #  with:
-    #    name: VapourSynth-BM3DCUDA-Linux
-    #    path: build/*source/libbm3dcuda*.so
+    #   uses: actions/upload-artifact@v2
+    #   with:
+    #     name: BM3DCUDA-Linux
+    #     path: build/*/lib*.so

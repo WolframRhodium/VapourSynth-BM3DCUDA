@@ -583,7 +583,7 @@ static inline float collaborative_hard(
 
     constexpr int stride1 = 1;
     constexpr int stride2 = stride1 * 8;
-  
+
     #pragma unroll
     for (int ndim = 0; ndim < 2; ++ndim) {
         transform_pack8_interleave4<transform_2d<true>, stride1, 8, stride2>(denoising_patch, buffer);
@@ -655,7 +655,7 @@ static inline float collaborative_wiener(
 
     constexpr int stride1 = 1;
     constexpr int stride2 = stride1 * 8;
-  
+
     #pragma unroll
     for (int ndim = 0; ndim < 2; ++ndim) {
         transform_pack8_interleave4<transform_2d<true>, stride1, 8, stride2>(denoising_patch, buffer);
@@ -762,7 +762,7 @@ void bm3d(
                 #else
                 auto active_mask = __activemask(); // lock-step execution
                 #endif
-              
+
                 float neighbor_patch[8];
 
                 #pragma unroll

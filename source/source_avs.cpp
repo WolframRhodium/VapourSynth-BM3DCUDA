@@ -41,11 +41,11 @@
 using namespace std::string_literals;
 
 extern cudaGraphExec_t get_graphexec(
-    float * d_res, float * d_src, float * h_res, 
-    int width, int height, int stride, 
-    float sigma, int block_step, int bm_range, 
-    int radius, int ps_num, int ps_range, 
-    bool chroma, float sigma_u, float sigma_v, 
+    float * d_res, float * d_src, float * h_res,
+    int width, int height, int stride,
+    float sigma, int block_step, int bm_range,
+    int radius, int ps_num, int ps_range,
+    bool chroma, float sigma_u, float sigma_v,
     bool final_, float extractor
 ) noexcept;
 
@@ -80,7 +80,7 @@ struct ticket_semaphore {
 };
 
 template <typename T, auto deleter>
-    requires 
+    requires
         std::default_initializable<T> &&
         std::is_trivially_copy_assignable_v<T> &&
         std::convertible_to<T, bool> &&
@@ -92,8 +92,8 @@ struct Resource {
 
     [[nodiscard]] constexpr Resource(T x) noexcept : data(x) {}
 
-    [[nodiscard]] constexpr Resource(Resource&& other) noexcept 
-        : data(std::exchange(other.data, T{})) 
+    [[nodiscard]] constexpr Resource(Resource&& other) noexcept
+        : data(std::exchange(other.data, T{}))
     { }
 
     constexpr Resource& operator=(Resource&& other) noexcept {
@@ -137,8 +137,8 @@ struct CUDA_Resource {
 };
 
 static inline void Aggregation(
-    float * __restrict dstp, int d_stride, 
-    const float * __restrict srcp, int s_stride, 
+    float * __restrict dstp, int d_stride,
+    const float * __restrict srcp, int s_stride,
     int width, int height
 ) noexcept {
 
@@ -160,7 +160,7 @@ class BM3DFilter : public GenericVideoFilter {
     std::vector<int> planes_id;
     PClip ref_node;
 
-    // stored in graphexec: 
+    // stored in graphexec:
     // float sigma[3];
     // int block_step[3];
     // int bm_range[3];
@@ -269,8 +269,8 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
                         int src_pitch = current_src->GetPitch(planes_id[plane]);
 
                         env->BitBlt(
-                            reinterpret_cast<BYTE *>(h_src), d_pitch, 
-                            srcp, src_pitch, 
+                            reinterpret_cast<BYTE *>(h_src), d_pitch,
+                            srcp, src_pitch,
                             width_bytes, height);
                     }
                     h_src += d_stride * height;
@@ -293,14 +293,14 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
 
             if (radius) {
                 env->BitBlt(
-                    dstp, dst_pitch, 
-                    reinterpret_cast<const BYTE *>(h_res), d_pitch, 
+                    dstp, dst_pitch,
+                    reinterpret_cast<const BYTE *>(h_res), d_pitch,
                     width_bytes, height * 2 * temporal_width
                 );
             } else {
                 Aggregation(
-                    reinterpret_cast<float *>(dstp), dst_stride, 
-                    h_res, d_stride, 
+                    reinterpret_cast<float *>(dstp), dst_stride,
+                    h_res, d_stride,
                     width, height
                 );
             }
@@ -324,8 +324,8 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
                 int src_pitch = current_src->GetPitch(planes_id[plane]);
 
                 env->BitBlt(
-                    reinterpret_cast<BYTE *>(h_src), d_pitch, 
-                    srcp, src_pitch, 
+                    reinterpret_cast<BYTE *>(h_src), d_pitch,
+                    srcp, src_pitch,
                     width_bytes, height
                 );
 
@@ -341,14 +341,14 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
             int dst_stride = dst_pitch / sizeof(float);
             if (radius) {
                 env->BitBlt(
-                    dstp, dst_pitch, 
-                    reinterpret_cast<const BYTE *>(h_res), d_pitch, 
+                    dstp, dst_pitch,
+                    reinterpret_cast<const BYTE *>(h_res), d_pitch,
                     width_bytes, height * 2 * temporal_width
                 );
             } else {
                 Aggregation(
-                    reinterpret_cast<float *>(dstp), dst_stride, 
-                    h_res, d_stride, 
+                    reinterpret_cast<float *>(dstp), dst_stride,
+                    h_res, d_stride,
                     width, height
                 );
             }
@@ -366,8 +366,8 @@ BM3DFilter::BM3DFilter(AVSValue args, IScriptEnvironment* env)
     env->CheckVersion(8);
 
     if (
-        vi.BitsPerComponent() != 32 || 
-        !vi.IsPlanar() || 
+        vi.BitsPerComponent() != 32 ||
+        !vi.IsPlanar() ||
         !(vi.IsY() || vi.IsYUV() || vi.IsRGB())
     ) {
         env->ThrowError("BM3D_CUDA: only 32bit float planar Y/YUV/RGB input supported");
@@ -390,10 +390,10 @@ BM3DFilter::BM3DFilter(AVSValue args, IScriptEnvironment* env)
         ref_node = args[1].AsClip();
         if (
             const auto & ref_vi = ref_node->GetVideoInfo();
-            ref_vi.width != src_width || ref_vi.height != src_height || 
-            ref_vi.fps_numerator != vi.fps_numerator || 
-            ref_vi.fps_denominator != vi.fps_denominator || 
-            ref_vi.num_frames != vi.num_frames || 
+            ref_vi.width != src_width || ref_vi.height != src_height ||
+            ref_vi.fps_numerator != vi.fps_numerator ||
+            ref_vi.fps_denominator != vi.fps_denominator ||
+            ref_vi.num_frames != vi.num_frames ||
             ref_vi.pixel_type != vi.pixel_type
         ) {
             env->ThrowError("BM3D_CUDA: \"ref\" must be of the same format as \"clip\"");
@@ -508,14 +508,14 @@ BM3DFilter::BM3DFilter(AVSValue args, IScriptEnvironment* env)
 
         resources.reserve(num_streams);
 
-        int max_width { 
-            vi.IsYUV() && !process[0] ? 
-            src_width >> vi.GetPlaneWidthSubsampling(PLANAR_U) : 
+        int max_width {
+            vi.IsYUV() && !process[0] ?
+            src_width >> vi.GetPlaneWidthSubsampling(PLANAR_U) :
             src_width
         };
-        int max_height { 
-            vi.IsYUV() && !process[0] ? 
-            src_height >> vi.GetPlaneHeightSubsampling(PLANAR_U) : 
+        int max_height {
+            vi.IsYUV() && !process[0] ?
+            src_height >> vi.GetPlaneHeightSubsampling(PLANAR_U) :
             src_height
         };
 
@@ -526,34 +526,34 @@ BM3DFilter::BM3DFilter(AVSValue args, IScriptEnvironment* env)
             if (i == 0) {
                 size_t _d_pitch;
                 checkError(cudaMallocPitch(
-                    &d_src.data, &_d_pitch, max_width * sizeof(float), 
+                    &d_src.data, &_d_pitch, max_width * sizeof(float),
                     (final_() ? 2 : 1) * num_input_planes * temporal_width * max_height));
                 d_pitch = static_cast<int>(_d_pitch);
             } else {
-                checkError(cudaMalloc(&d_src.data, 
+                checkError(cudaMalloc(&d_src.data,
                     (final_() ? 2 : 1) * num_input_planes * temporal_width * max_height * d_pitch));
             }
 
             Resource<float *, cudaFree> d_res {};
-            checkError(cudaMalloc(&d_res.data, 
+            checkError(cudaMalloc(&d_res.data,
                 num_input_planes * temporal_width * 2 * max_height * d_pitch));
 
             Resource<float *, cudaFreeHost> h_res {};
-            checkError(cudaMallocHost(&h_res.data, 
+            checkError(cudaMallocHost(&h_res.data,
                 num_input_planes * temporal_width * 2 * max_height * d_pitch));
 
             Resource<cudaStream_t, cudaStreamDestroy> stream {};
-            checkError(cudaStreamCreateWithFlags(&stream.data, 
+            checkError(cudaStreamCreateWithFlags(&stream.data,
                 cudaStreamNonBlocking));
 
             std::array<Resource<cudaGraphExec_t, cudaGraphExecDestroy>, 3> graphexecs {};
             if (chroma) {
                 graphexecs[0] = get_graphexec(
-                    d_res, d_src, h_res, 
-                    src_width, src_height, d_pitch / sizeof(float), 
-                    sigma[0], block_step[0], bm_range[0], 
-                    radius, ps_num[0], ps_range[0], 
-                    true, sigma[1], sigma[2], 
+                    d_res, d_src, h_res,
+                    src_width, src_height, d_pitch / sizeof(float),
+                    sigma[0], block_step[0], bm_range[0],
+                    radius, ps_num[0], ps_range[0],
+                    true, sigma[1], sigma[2],
                     final_(), extractor
                 );
             } else {
@@ -562,33 +562,33 @@ BM3DFilter::BM3DFilter(AVSValue args, IScriptEnvironment* env)
                         continue;
                     }
 
-                    int plane_width { 
-                        vi.IsYUV() && plane != 0 ? 
-                        src_width >> vi.GetPlaneWidthSubsampling(PLANAR_U) : 
+                    int plane_width {
+                        vi.IsYUV() && plane != 0 ?
+                        src_width >> vi.GetPlaneWidthSubsampling(PLANAR_U) :
                         src_width
                     };
-                    int plane_height { 
-                        vi.IsYUV() && plane != 0 ? 
-                        src_height >> vi.GetPlaneHeightSubsampling(PLANAR_U) : 
+                    int plane_height {
+                        vi.IsYUV() && plane != 0 ?
+                        src_height >> vi.GetPlaneHeightSubsampling(PLANAR_U) :
                         src_height
                     };
 
                     graphexecs[plane] = get_graphexec(
-                        d_res, d_src, h_res, 
-                        plane_width, plane_height, d_pitch / sizeof(float), 
-                        sigma[plane], block_step[plane], bm_range[plane], 
-                        radius, ps_num[plane], ps_range[plane], 
-                        false, 0.0f, 0.0f, 
+                        d_res, d_src, h_res,
+                        plane_width, plane_height, d_pitch / sizeof(float),
+                        sigma[plane], block_step[plane], bm_range[plane],
+                        radius, ps_num[plane], ps_range[plane],
+                        false, 0.0f, 0.0f,
                         final_(), extractor
                     );
                 }
             }
 
             resources.push_back(CUDA_Resource{
-                .d_src = std::move(d_src), 
-                .d_res = std::move(d_res), 
-                .h_res = std::move(h_res), 
-                .stream = std::move(stream), 
+                .d_src = std::move(d_src),
+                .d_res = std::move(d_res),
+                .h_res = std::move(h_res),
+                .stream = std::move(stream),
                 .graphexecs = std::move(graphexecs)
             });
         }
@@ -604,14 +604,14 @@ AVSValue __cdecl BM3DFilter::Create(
 
 const AVS_Linkage *AVS_linkage {};
 
-extern "C" __declspec(dllexport) 
+extern "C" __declspec(dllexport)
 const char* __stdcall AvisynthPluginInit3(
     IScriptEnvironment* env, const AVS_Linkage* const vectors
 ) {
 
     AVS_linkage = vectors;
 
-    env->AddFunction("BM3D_CUDA", 
+    env->AddFunction("BM3D_CUDA",
         "c[ref]c"
         "[sigma]f[block_step]i[bm_range]"
         "i[radius]i[ps_num]i[ps_range]"

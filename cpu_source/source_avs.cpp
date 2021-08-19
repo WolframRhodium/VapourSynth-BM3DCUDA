@@ -23,7 +23,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <concepts>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -35,8 +34,8 @@
 #include <avisynth.h>
 
 static inline void Aggregation(
-    float * __restrict dstp, int d_stride, 
-    const float * __restrict srcp, int s_stride, 
+    float * __restrict dstp, int d_stride,
+    const float * __restrict srcp, int s_stride,
     int width, int height
 ) noexcept {
 
@@ -110,8 +109,8 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
 
     PVideoFrame dst = env->NewVideoFrameP(vi, const_cast<PVideoFrame *>(&src_frame));
 
-    const auto cast_fp = []<typename T>(T * p) {
-        if constexpr (std::is_const_v<T>)
+    const auto cast_fp = [](auto * p) {
+        if constexpr (std::is_same_v<std::decay_t<decltype(p)>, decltype(p)>)
             return reinterpret_cast<const float *>(p);
         else
             return reinterpret_cast<float *>(p);
@@ -145,11 +144,11 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
         float * buffer = [&]() -> float * {
             if (radius == 0) {
                 auto p = env->Allocate(
-                    sizeof(float) * stride * height * 2 * num_planes(chroma), 
-                    32, 
+                    sizeof(float) * stride * height * 2 * num_planes(chroma),
+                    32,
                     AVS_POOLED_ALLOC
                 );
-                return cast_fp(p);
+                return reinterpret_cast<float *>(p);
             } else {
                 return nullptr;
             }
@@ -168,18 +167,18 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
             if (radius == 0) {
                 constexpr bool temporal = false;
                 bm3d<temporal, chroma, final_>(
-                    dstps, stride, srcps.data(), nullptr, 
-                    width, height, 
-                    sigma, block_step[0], bm_range[0], 
-                    radius, ps_num[0], ps_range[0], 
+                    dstps, stride, srcps.data(), nullptr,
+                    width, height,
+                    sigma, block_step[0], bm_range[0],
+                    radius, ps_num[0], ps_range[0],
                     buffer);
             } else {
                 constexpr bool temporal = true;
                 bm3d<temporal, chroma, final_>(
-                    dstps, stride, srcps.data(), nullptr, 
-                    width, height, 
-                    sigma, block_step[0], bm_range[0], 
-                    radius, ps_num[0], ps_range[0], 
+                    dstps, stride, srcps.data(), nullptr,
+                    width, height,
+                    sigma, block_step[0], bm_range[0],
+                    radius, ps_num[0], ps_range[0],
                     nullptr);
             }
         } else {
@@ -197,18 +196,18 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
             if (radius == 0) {
                 constexpr bool temporal = false;
                 bm3d<temporal, chroma, final_>(
-                    dstps, stride, srcps.data(), refps.data(), 
-                    width, height, 
-                    sigma, block_step[0], bm_range[0], 
-                    radius, ps_num[0], ps_range[0], 
+                    dstps, stride, srcps.data(), refps.data(),
+                    width, height,
+                    sigma, block_step[0], bm_range[0],
+                    radius, ps_num[0], ps_range[0],
                     buffer);
             } else {
                 constexpr bool temporal = true;
                 bm3d<temporal, chroma, final_>(
-                    dstps, stride, srcps.data(), refps.data(), 
-                    width, height, 
-                    sigma, block_step[0], bm_range[0], 
-                    radius, ps_num[0], ps_range[0], 
+                    dstps, stride, srcps.data(), refps.data(),
+                    width, height,
+                    sigma, block_step[0], bm_range[0],
+                    radius, ps_num[0], ps_range[0],
                     nullptr);
             }
         }
@@ -233,8 +232,8 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
                 return temp;
             }();
 
-            std::array<float * __restrict, 1> dstps { 
-                cast_fp(dst->GetWritePtr(planes_id[plane]))
+            std::array<float * __restrict, 1> dstps {
+                reinterpret_cast<float *>(dst->GetWritePtr(planes_id[plane]))
             };
 
             const int width = src_frame->GetRowSize(planes_id[plane]) / sizeof(float);
@@ -244,10 +243,10 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
             float * const buffer = [&]() -> float * {
                 if (radius == 0) {
                     auto p = env->Allocate(
-                        sizeof(float) * stride * height * 2 * num_planes(chroma), 
-                        32, 
+                        sizeof(float) * stride * height * 2 * num_planes(chroma),
+                        32,
                         AVS_POOLED_ALLOC);
-                    return cast_fp(p);
+                    return reinterpret_cast<float *>(p);
                 } else {
                     return nullptr;
                 }
@@ -268,18 +267,18 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
                 if (radius == 0) {
                     constexpr bool temporal = false;
                     bm3d<temporal, chroma, final_>(
-                        dstps, stride, srcps.data(), nullptr, 
-                        width, height, 
-                        plane_sigma, block_step[plane], bm_range[plane], 
-                        radius, ps_num[plane], ps_range[plane], 
+                        dstps, stride, srcps.data(), nullptr,
+                        width, height,
+                        plane_sigma, block_step[plane], bm_range[plane],
+                        radius, ps_num[plane], ps_range[plane],
                         buffer);
                 } else {
                     constexpr bool temporal = true;
                     bm3d<temporal, chroma, final_>(
-                        dstps, stride, srcps.data(), nullptr, 
-                        width, height, 
-                        plane_sigma, block_step[plane], bm_range[plane], 
-                        radius, ps_num[plane], ps_range[plane], 
+                        dstps, stride, srcps.data(), nullptr,
+                        width, height,
+                        plane_sigma, block_step[plane], bm_range[plane],
+                        radius, ps_num[plane], ps_range[plane],
                         nullptr);
                 }
             } else {
@@ -295,18 +294,18 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
                 if (radius == 0) {
                     constexpr bool temporal = false;
                     bm3d<temporal, chroma, final_>(
-                        dstps, stride, srcps.data(), refps.data(), 
-                        width, height, 
-                        plane_sigma, block_step[plane], bm_range[plane], 
-                        radius, ps_num[plane], ps_range[plane], 
+                        dstps, stride, srcps.data(), refps.data(),
+                        width, height,
+                        plane_sigma, block_step[plane], bm_range[plane],
+                        radius, ps_num[plane], ps_range[plane],
                         buffer);
                 } else {
                     constexpr bool temporal = true;
                     bm3d<temporal, chroma, final_>(
-                        dstps, stride, srcps.data(), refps.data(), 
-                        width, height, 
-                        plane_sigma, block_step[plane], bm_range[plane], 
-                        radius, ps_num[plane], ps_range[plane], 
+                        dstps, stride, srcps.data(), refps.data(),
+                        width, height,
+                        plane_sigma, block_step[plane], bm_range[plane],
+                        radius, ps_num[plane], ps_range[plane],
                         nullptr);
                 }
             }
@@ -326,8 +325,8 @@ BM3DFilter::BM3DFilter(AVSValue args, IScriptEnvironment* env)
     env->CheckVersion(8);
 
     if (
-        vi.BitsPerComponent() != 32 || 
-        !vi.IsPlanar() || 
+        vi.BitsPerComponent() != 32 ||
+        !vi.IsPlanar() ||
         !(vi.IsY() || vi.IsYUV() || vi.IsRGB())
     ) {
         env->ThrowError("BM3D_CPU: only 32bit float planar Y/YUV/RGB input supported");
@@ -350,17 +349,18 @@ BM3DFilter::BM3DFilter(AVSValue args, IScriptEnvironment* env)
         ref_node = args[1].AsClip();
         if (
             const auto & ref_vi = ref_node->GetVideoInfo();
-            ref_vi.width != src_width || ref_vi.height != src_height || 
-            ref_vi.fps_numerator != vi.fps_numerator || 
-            ref_vi.fps_denominator != vi.fps_denominator || 
-            ref_vi.num_frames != vi.num_frames || 
+            ref_vi.width != src_width || ref_vi.height != src_height ||
+            ref_vi.fps_numerator != vi.fps_numerator ||
+            ref_vi.fps_denominator != vi.fps_denominator ||
+            ref_vi.num_frames != vi.num_frames ||
             ref_vi.pixel_type != vi.pixel_type
         ) {
             env->ThrowError("BM3D_CPU: \"ref\" must be of the same format as \"clip\"");
         }
     }
 
-    auto array_loader = []<typename T>(const AVSValue & arg, T default_value) {
+    auto array_loader = [](const AVSValue & arg, const auto default_value) {
+        using T = std::remove_const_t<decltype(default_value)>;
         std::array<T, 3> ret;
         if (!arg.Defined()) {
             ret.fill(default_value);
@@ -451,14 +451,14 @@ AVSValue __cdecl BM3DFilter::Create(
 
 const AVS_Linkage *AVS_linkage {};
 
-extern "C" __declspec(dllexport) 
+extern "C" __declspec(dllexport)
 const char* __stdcall AvisynthPluginInit3(
     IScriptEnvironment* env, const AVS_Linkage* const vectors
 ) {
 
     AVS_linkage = vectors;
 
-    env->AddFunction("BM3D_CPU", 
+    env->AddFunction("BM3D_CPU",
         "c[ref]c"
         "[sigma]f[block_step]i[bm_range]"
         "i[radius]i[ps_num]i[ps_range]i[chroma]b"
@@ -466,3 +466,4 @@ const char* __stdcall AvisynthPluginInit3(
 
    return "BM3D algorithm (AVX2 version)";
 }
+

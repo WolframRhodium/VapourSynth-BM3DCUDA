@@ -24,6 +24,12 @@ jobs:
         curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.4.1/network_installers/cuda_11.4.1_win10_network.exe
         cuda_installer.exe -s nvcc_11.4 cudart_11.4 nvrtc_dev_11.4 visual_studio_integration_11.4
 
+    - name: Download AviSynth+ headers
+      run: |
+        curl -s -o avs+.zip -L https://github.com/AviSynth/AviSynthPlus/archive/refs/tags/v3.7.0.zip
+        unzip -q avs+.zip
+        mv AviSynthPlus*/ avisynth+
+
     - name: Download VapourSynth headers
       run: |
         curl -s -o vs.zip -L https://github.com/vapoursynth/vapoursynth/archive/refs/tags/R54.zip
@@ -31,7 +37,11 @@ jobs:
         mv vapoursynth-*/ vapoursynth/
 
     - name: Configure
-      run: cmake -S . -B build -G "Visual Studio 16 2019" -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include"
+      run: cmake -S . -B build -G "Visual Studio 16 2019"
+        -D ENABLE_AVISYNTHPLUS=ON
+        -D AVISYNTHPLUS_INCLUDE_DIRECTORY="%cd%\avisynth+\avs_core\include"
+        -D ENABLE_VAPOURSYNTH=ON
+        -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include"
         -D CMAKE_CXX_FLAGS_RELEASE="/fp:fast /arch:AVX"
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
         -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86"
@@ -48,5 +58,5 @@ jobs:
     - name: Upload
       uses: actions/upload-artifact@v2
       with:
-        name: VapourSynth-BM3DCUDA-Windows
-        path: build/*source/Release/bm3d*.dll
+        name: BM3DCUDA-Windows
+        path: build/*/Release/*.dll
