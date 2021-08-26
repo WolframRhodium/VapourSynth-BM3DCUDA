@@ -176,33 +176,29 @@ class BM3DFilter : public GenericVideoFilter {
     int d_pitch;
     int device_id;
 
-    std::vector<CUDA_Resource> resources;
-
     ticket_semaphore semaphore;
-    std::unique_ptr<std::atomic_flag[]> locks;
+
+    std::vector<CUDA_Resource> resources;
+    std::mutex resources_lock;
 
     // final estimation
     bool final_() const {
         return static_cast<bool>(ref_node);
     }
 
-    int lock() {
+    CUDA_Resource acquire() {
         semaphore.acquire();
-        if (num_streams > 1) {
-            for (int i = 0; i < num_streams; ++i) {
-                if (!locks[i].test_and_set(std::memory_order::acquire)) {
-                    return i;
-                }
-            }
-            abort(); // impossible
-        }
-        return 0;
+        resources_lock.lock();
+        auto resource = std::move(resources.back());
+        resources.pop_back();
+        resources_lock.unlock();
+        return resource;
     }
 
-    void unlock(int lock_idx) {
-        if (num_streams > 1) {
-            locks[lock_idx].clear(std::memory_order::release);
-        }
+    void release(CUDA_Resource && resource) {
+        resources_lock.lock();
+        resources.push_back(std::move(resource));
+        resources_lock.unlock();
         semaphore.release();
     }
 
@@ -244,13 +240,13 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
 
     PVideoFrame dst = env->NewVideoFrameP(vi, const_cast<PVideoFrame *>(&src));
 
-    const int lock_idx = lock();
+    auto resource = acquire();
 
     checkError(cudaSetDevice(device_id));
 
-    float * h_res = resources[lock_idx].h_res;
+    float * h_res = resource.h_res;
 
-    const auto & stream = resources[lock_idx].stream;
+    const auto & stream = resource.stream;
     int d_stride = d_pitch / sizeof(float);
 
     if (chroma) {
@@ -278,7 +274,7 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
             }
         }
 
-        const auto & graphexec = resources[lock_idx].graphexecs[0];
+        const auto & graphexec = resource.graphexecs[0];
         checkError(cudaGraphLaunch(graphexec, stream));
         checkError(cudaStreamSynchronize(stream));
 
@@ -332,7 +328,7 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
                 h_src += d_stride * height;
             }
 
-            const auto & graphexec = resources[lock_idx].graphexecs[plane];
+            const auto & graphexec = resource.graphexecs[plane];
             checkError(cudaGraphLaunch(graphexec, stream));
             checkError(cudaStreamSynchronize(stream));
 
@@ -355,7 +351,7 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
         }
     }
 
-    unlock(lock_idx);
+    release(std::move(resource));
 
     return dst;
 }
@@ -503,8 +499,6 @@ BM3DFilter::BM3DFilter(AVSValue args, IScriptEnvironment* env)
     // GPU resource allocation
     {
         semaphore.current.store(num_streams - 1, std::memory_order::relaxed);
-
-        locks = std::make_unique<std::atomic_flag[]>(num_streams);
 
         resources.reserve(num_streams);
 
