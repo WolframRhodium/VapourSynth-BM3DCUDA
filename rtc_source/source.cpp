@@ -28,6 +28,7 @@
 #include <ios>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -182,9 +183,9 @@ struct BM3DData {
     CUdevice device;
     CUcontext context; // use primary context
     ticket_semaphore semaphore;
-    std::unique_ptr<std::atomic_flag[]> resource_locks;
     Resource<CUmodule, cuModuleUnload> modules[3];
     std::vector<CUDA_Resource> resources;
+    std::mutex resources_lock;
 };
 
 static std::variant<CUmodule, std::string> compile(
@@ -520,30 +521,25 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             );
         }
 
-        int lock_idx = 0;
         d->semaphore.acquire();
-        if (d->num_copy_engines > 1) {
-            for (int i = 0; i < d->num_copy_engines; ++i) {
-                if (!d->resource_locks[i].test_and_set(std::memory_order::acquire)) {
-                    lock_idx = i;
-                    break;
-                }
-            }
-        }
+        d->resources_lock.lock();
+        auto resource = std::move(d->resources.back());
+        d->resources.pop_back();
+        d->resources_lock.unlock();
 
         const auto set_error = [&](const std::string & error_message) {
-            if (d->num_copy_engines > 1) {
-                d->resource_locks[lock_idx].clear(std::memory_order::release);
-                d->semaphore.release();
-            }
+            d->resources_lock.lock();
+            d->resources.push_back(std::move(resource));
+            d->resources_lock.unlock();
+            d->semaphore.release();
 
             vsapi->setFilterError(("BM3D_RTC: " + error_message).c_str(), frameCtx);
 
             return nullptr;
         };
 
-        float * const h_res = d->resources[lock_idx].h_res;
-        CUstream stream = d->resources[lock_idx].stream;
+        float * const h_res = resource.h_res;
+        CUstream stream = resource.stream;
         int d_pitch = d->d_pitch;
         int d_stride = d_pitch / sizeof(float);
 
@@ -556,7 +552,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             int s_stride = s_pitch / sizeof(float);
             int width_bytes = width * sizeof(float);
 
-            CUgraphExec graphexec = d->resources[lock_idx].graphexecs[0];
+            CUgraphExec graphexec = resource.graphexecs[0];
 
             float * h_src = h_res;
             for (int outer = 0; outer < (final_ ? 2 : 1); ++outer) {
@@ -617,7 +613,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 int s_stride = s_pitch / sizeof(float);
                 int width_bytes = width * sizeof(float);
 
-                CUgraphExec graphexec = d->resources[lock_idx].graphexecs[plane];
+                CUgraphExec graphexec = resource.graphexecs[plane];
 
                 float * h_src = h_res;
                 for (int i = 0; i < num_input_frames; ++i) {
@@ -653,9 +649,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
 
         checkError(cuCtxPopCurrent(nullptr));
 
-        if (d->num_copy_engines > 1) {
-            d->resource_locks[lock_idx].clear(std::memory_order::release);
-        }
+        d->resources_lock.lock();
+        d->resources.push_back(std::move(resource));
+        d->resources_lock.unlock();
         d->semaphore.release();
 
         if (radius) {
@@ -915,7 +911,6 @@ static void VS_CC BM3DCreate(
     }();
 
     d->semaphore.current.store(num_copy_engines - 1, std::memory_order::relaxed);
-    d->resource_locks = std::make_unique<std::atomic_flag[]>(num_copy_engines);
 
     // GPU related
     {
