@@ -700,10 +700,6 @@ static void VS_CC BM3DCreate(
         vsapi->setError(out, ("BM3D_RTC: " + error_message).c_str());
         vsapi->freeNode(d->node);
         vsapi->freeNode(d->ref_node);
-        if (d->context) {
-            cuDevicePrimaryCtxRelease(d->device);
-            d->context = nullptr;
-        }
     };
 
     d->node = vsapi->propGetNode(in, "clip", 0, nullptr);
