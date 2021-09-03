@@ -37,7 +37,7 @@ jobs:
         mv vapoursynth-*/ vapoursynth/
 
     - name: Configure
-      run: cmake -S . -B build -G "Visual Studio 16 2019"
+      run: cmake -S . -B build -G "Visual Studio 16 2019" -A x64
         -D ENABLE_AVISYNTHPLUS=ON
         -D AVISYNTHPLUS_INCLUDE_DIRECTORY="%cd%\avisynth+\avs_core\include"
         -D ENABLE_VAPOURSYNTH=ON
@@ -60,3 +60,28 @@ jobs:
       with:
         name: BM3DCUDA-Windows
         path: build/*/Release/*.dll
+
+    - name: Configure (x86)
+      run: cmake -S . -B build_x86 -G "Visual Studio 16 2019" -A Win32 
+        -D ENABLE_AVISYNTHPLUS=ON
+        -D AVISYNTHPLUS_INCLUDE_DIRECTORY="%cd%\avisynth+\avs_core\include"
+        -D ENABLE_VAPOURSYNTH=ON
+        -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include"
+        -D CMAKE_CXX_FLAGS_RELEASE="/fp:fast /arch:AVX"
+        -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
+        -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86"
+      env:
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4
+        CUDA_PATH_V11_4: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4
+
+    - name: Build (x86)
+      run: cmake --build build_x86 --config Release --parallel %NUMBER_OF_PROCESSORS% --verbose
+      env:
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4
+        CUDA_PATH_V11_4: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4
+
+    - name: Upload (x86)
+      uses: actions/upload-artifact@v2
+      with:
+        name: BM3DCUDA-Windows-x86
+        path: build_x86/*source/Release/bm3d*.dll
