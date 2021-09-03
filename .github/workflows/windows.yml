@@ -58,7 +58,7 @@ jobs:
     - name: Upload
       uses: actions/upload-artifact@v2
       with:
-        name: BM3DCUDA-Windows
+        name: BM3DCUDA-Windows-x64
         path: build/*/Release/*.dll
 
     - name: Configure (x86)
