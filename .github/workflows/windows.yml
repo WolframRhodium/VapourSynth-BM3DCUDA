@@ -84,4 +84,4 @@ jobs:
       uses: actions/upload-artifact@v2
       with:
         name: BM3DCUDA-Windows-x86
-        path: build_x86/*source/Release/bm3d*.dll
+        path: build_x86/*/Release/bm3d*.dll
