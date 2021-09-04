@@ -74,6 +74,8 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
     If `chroma` is set to `True`, only the first value is in effect.
 
     Otherwise an array of values may be specified for each plane (except `radius`).
+    
+    **Note**: It is generally not recommended to take a large value of `ps_num` as current implementations do not take duplicate block-matching candidates into account during temporary searching, which may leads to regression in denoising quality. This issue is not present in `VapourSynth-BM3D`.
 
 - chroma:
 
