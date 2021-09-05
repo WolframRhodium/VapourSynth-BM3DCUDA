@@ -77,6 +77,8 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
     
     **Note**: It is generally not recommended to take a large value of `ps_num` as current implementations do not take duplicate block-matching candidates into account during temporary searching, which may leads to regression in denoising quality. This issue is not present in `VapourSynth-BM3D`.
 
+    **Note2**: Lowering the value of "blocking_step" will be useful in reducing blocking artifacts at the cost of slower processing.
+
 - chroma:
 
     CBM3D algorithm. `clip` must be of `YUV444PS` format.
