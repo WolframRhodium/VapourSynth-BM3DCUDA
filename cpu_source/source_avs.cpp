@@ -110,7 +110,7 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
     PVideoFrame dst = env->NewVideoFrameP(vi, const_cast<PVideoFrame *>(&src_frame));
 
     const auto cast_fp = [](auto * p) {
-        if constexpr (std::is_same_v<std::decay_t<decltype(p)>, decltype(p)>)
+        if constexpr (std::is_const_v<std::remove_pointer_t<decltype(p)>>)
             return reinterpret_cast<const float *>(p);
         else
             return reinterpret_cast<float *>(p);
@@ -148,7 +148,7 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
                     32,
                     AVS_POOLED_ALLOC
                 );
-                return reinterpret_cast<float *>(p);
+                return cast_fp(p);
             } else {
                 return nullptr;
             }
@@ -233,7 +233,7 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
             }();
 
             std::array<float * __restrict, 1> dstps {
-                reinterpret_cast<float *>(dst->GetWritePtr(planes_id[plane]))
+                cast_fp(dst->GetWritePtr(planes_id[plane]))
             };
 
             const int width = src_frame->GetRowSize(planes_id[plane]) / sizeof(float);
@@ -246,7 +246,7 @@ PVideoFrame __stdcall BM3DFilter::GetFrame(int n, IScriptEnvironment* env) {
                         sizeof(float) * stride * height * 2 * num_planes(chroma),
                         32,
                         AVS_POOLED_ALLOC);
-                    return reinterpret_cast<float *>(p);
+                    return cast_fp(p);
                 } else {
                     return nullptr;
                 }
@@ -362,9 +362,9 @@ BM3DFilter::BM3DFilter(AVSValue args, IScriptEnvironment* env)
     auto array_loader = [](const AVSValue & arg, const auto default_value) {
         using T = std::remove_const_t<decltype(default_value)>;
         std::array<T, 3> ret;
-        if (!arg.Defined()) {
+        if (!arg.Defined() || arg.ArraySize() == 0) {
             ret.fill(default_value);
-        } else if (arg.IsArray()) {
+        } else {
             int length = std::min(arg.ArraySize(), 3);
             for (int i = 0; i < length; ++i) {
                 if constexpr (std::is_same_v<T, float>) {
@@ -375,12 +375,6 @@ BM3DFilter::BM3DFilter(AVSValue args, IScriptEnvironment* env)
             }
             for (int i = length; i < 3; ++i) {
                 ret[i] = ret[i - 1];
-            }
-        } else {
-            if constexpr (std::is_same_v<T, float>) {
-                ret.fill(static_cast<float>(arg.AsFloat(default_value)));
-            } else if (std::is_same_v<T, int>) {
-                ret.fill(arg.AsInt(default_value));
             }
         }
         return ret;
@@ -460,8 +454,8 @@ const char* __stdcall AvisynthPluginInit3(
 
     env->AddFunction("BM3D_CPU",
         "c[ref]c"
-        "[sigma]f[block_step]i[bm_range]"
-        "i[radius]i[ps_num]i[ps_range]i[chroma]b"
+        "[sigma]f+[block_step]i+[bm_range]i+"
+        "[radius]i[ps_num]i+[ps_range]i+[chroma]b"
         , BM3DFilter::Create, nullptr);
 
    return "BM3D algorithm (AVX2 version)";

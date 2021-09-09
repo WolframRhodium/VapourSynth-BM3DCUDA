@@ -396,11 +396,12 @@ BM3DFilter::BM3DFilter(AVSValue args, IScriptEnvironment* env)
         }
     }
 
-    auto array_loader = []<typename T>(const AVSValue & arg, T default_value) {
+    auto array_loader = [](const AVSValue & arg, const auto default_value) {
+        using T = std::remove_const_t<decltype(default_value)>;
         std::array<T, 3> ret;
-        if (!arg.Defined()) {
+        if (!arg.Defined() || arg.ArraySize() == 0) {
             ret.fill(default_value);
-        } else if (arg.IsArray()) {
+        } else {
             int length = std::min(arg.ArraySize(), 3);
             for (int i = 0; i < length; ++i) {
                 if constexpr (std::is_same_v<T, float>) {
@@ -411,12 +412,6 @@ BM3DFilter::BM3DFilter(AVSValue args, IScriptEnvironment* env)
             }
             for (int i = length; i < 3; ++i) {
                 ret[i] = ret[i - 1];
-            }
-        } else {
-            if constexpr (std::is_same_v<T, float>) {
-                ret.fill(static_cast<float>(arg.AsFloat(default_value)));
-            } else if (std::is_same_v<T, int>) {
-                ret.fill(arg.AsInt(default_value));
             }
         }
         return ret;
@@ -607,9 +602,9 @@ const char* __stdcall AvisynthPluginInit3(
 
     env->AddFunction("BM3D_CUDA",
         "c[ref]c"
-        "[sigma]f[block_step]i[bm_range]"
-        "i[radius]i[ps_num]i[ps_range]"
-        "i[chroma]b[device_id]i[fast]b[extractor_exp]i"
+        "[sigma]f+[block_step]i+[bm_range]i+"
+        "[radius]i[ps_num]i+[ps_range]i+"
+        "[chroma]b[device_id]i[fast]b[extractor_exp]i"
         , BM3DFilter::Create, nullptr);
 
    return "BM3D algorithm";
