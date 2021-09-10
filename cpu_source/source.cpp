@@ -60,6 +60,8 @@
 
 #include <immintrin.h>
 
+#include "cpuid.h"
+
 struct BM3DData {
     VSNodeRef * node;
     VSNodeRef * ref_node;
@@ -1223,6 +1225,10 @@ static void VS_CC BM3DCreate(
     const VSMap *in, VSMap *out, void *userData,
     VSCore *core, const VSAPI *vsapi
 ) noexcept {
+    if (!cpu_supports_avx2()) {
+        vsapi->setError(out, "bm3dcpu: requires AVX2-capable cpu");
+        return;
+    }
 
     auto d { std::make_unique<BM3DData>() };
 
