@@ -33,6 +33,8 @@
 
 #include <avisynth.h>
 
+#include "cpuid.h"
+
 static inline void Aggregation(
     float * __restrict dstp, int d_stride,
     const float * __restrict srcp, int s_stride,
@@ -323,6 +325,10 @@ BM3DFilter::BM3DFilter(AVSValue args, IScriptEnvironment* env)
   : GenericVideoFilter(args[0].AsClip()), ref_node()
 {
     env->CheckVersion(8);
+
+    if (!cpu_supports_avx2()) {
+        env->ThrowError("BM3D_CPU: requires AVX2-capable cpu");
+    }
 
     if (
         vi.BitsPerComponent() != 32 ||
