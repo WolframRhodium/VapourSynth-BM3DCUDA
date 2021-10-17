@@ -439,10 +439,10 @@ BM3DFilter::BM3DFilter(AVSValue args, IScriptEnvironment* env)
         }
     }
 
-    std::array bm_range = array_loader(args[4], 8);
+    std::array bm_range = array_loader(args[4], 9);
     for (const auto & x : bm_range) {
-        if (x <= 0 || x > 8) {
-            env->ThrowError("BM3D_CUDA: \"bm_range\" must be in range [1, 8]");
+        if (x <= 0) {
+            env->ThrowError("BM3D_CUDA: \"bm_range\" must be positive");
         }
     }
 
@@ -455,8 +455,8 @@ BM3DFilter::BM3DFilter(AVSValue args, IScriptEnvironment* env)
 
     std::array ps_num = array_loader(args[6], 2);
     for (const auto & x : ps_num) {
-        if (x <= 0 || x > 8) {
-            env->ThrowError("BM3D_CUDA: \"ps_num\" must be in range [1, 8]");
+        if (x <= 0) {
+            env->ThrowError("BM3D_CUDA: \"ps_num\" must be positive");
         }
     }
 
