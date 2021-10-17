@@ -21,12 +21,12 @@ jobs:
 
     - name: Setup CUDA
       run: |
-        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.4.1/network_installers/cuda_11.4.1_win10_network.exe
+        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.4.2/network_installers/cuda_11.4.2_win10_network.exe
         cuda_installer.exe -s nvcc_11.4 cudart_11.4 nvrtc_dev_11.4 visual_studio_integration_11.4
 
     - name: Download VapourSynth headers
       run: |
-        curl -s -o vs.zip -L https://github.com/vapoursynth/vapoursynth/archive/refs/tags/R54.zip
+        curl -s -o vs.zip -L https://github.com/vapoursynth/vapoursynth/archive/refs/tags/R57.zip
         unzip -q vs.zip
         mv vapoursynth-*/ vapoursynth/
 
