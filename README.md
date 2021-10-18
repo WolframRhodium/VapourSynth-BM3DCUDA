@@ -56,7 +56,7 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
     basic = core.bm3d.Basic(clip)
     final = core.bm3d.Final(basic, ref=src)
 
-    vbasic = core.bm3d.VBasic(src, radius=r).bm3d.VAggregate(radius=r)
+    vbasic = core.bm3d.VBasic(src, radius=r).bm3d.VAggregate(radius=r, sample=1)
     vfinal = core.bm3d.VFinal(src, ref=vbasic, radius=r).bm3d.VAggregate(radius=r)
     ```
 
