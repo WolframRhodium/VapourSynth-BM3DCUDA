@@ -22,8 +22,6 @@ BM3D denoising filter for VapourSynth, implemented in CUDA.
 
 The minimum requirement on compute capability is 3.5, which requires manual compilation (specifying nvcc flag `-gencode arch=compute_35,code=sm_35`).
 
-The `_rtc` version requires compute capability 3.5 or higher, GPU driver 465 or newer and has dependencies on `nvrtc64_112_0.dll/libnvrtc.so.11.2` and `nvrtc-builtins64_114.dll/libnvrtc-builtins.so.11.4.50`.
-
 The `cpu` version does not require any external libraries but requires AVX2 support on CPU in addition.
 
 ## Parameters
@@ -149,6 +147,8 @@ GPU memory consumptions:
 `(ref ? 4 : 3) * (chroma ? 3 : 1) * (fast ? 4 : 1) * (2 * radius + 1) * size_of_a_single_frame`
 
 ## Compilation
+- The CMake configuration of `BM3DCUDA_RTC` links to NVRTC static library by default, which requires CUDA 11.5 or later.
+
 ```bash
 cmake -S . -B build -D CMAKE_BUILD_TYPE=Release -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math -Wno-deprecated-gpu-targets" -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86"
 

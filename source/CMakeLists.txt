@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(BM3DCUDA VERSION 2.5 LANGUAGES CXX CUDA)
+project(BM3DCUDA VERSION 2.6 LANGUAGES CXX CUDA)
 
 add_library(bm3dcuda_source OBJECT source.cpp)
 target_include_directories(bm3dcuda_source PRIVATE 
