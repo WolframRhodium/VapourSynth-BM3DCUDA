@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(BM3DCPU VERSION 2.5 LANGUAGES CXX)
+project(BM3DCPU VERSION 2.6 LANGUAGES CXX)
 
 if (ENABLE_VAPOURSYNTH)
     add_library(bm3dcpu SHARED source.cpp)

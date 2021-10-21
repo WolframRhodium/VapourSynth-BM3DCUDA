@@ -40,10 +40,6 @@
 #include <cuda.h>
 #include <nvrtc.h>
 
-#ifdef _WIN64
-#   include <windows.h>
-#endif
-
 #include <VapourSynth.h>
 #include <VSHelper.h>
 
@@ -941,18 +937,6 @@ static void VS_CC BM3DCreate(
 
         const int num_planes { chroma ? 3 : 1 };
         const int temporal_width = 2 * radius + 1;
-
-#ifdef _WIN64
-        const std::string plugin_path =
-            vsapi->getPluginPath(vsapi->getPluginById("com.wolframrhodium.bm3dcuda_rtc", core));
-        std::string folder_path = plugin_path.substr(0, plugin_path.find_last_of('/'));
-        int nvrtc_major, nvrtc_minor;
-        nvrtcVersion(&nvrtc_major, &nvrtc_minor);
-        const int nvrtc_version = nvrtc_major * 10 + nvrtc_minor;
-        const std::string dll_path =
-            folder_path + "/nvrtc-builtins64_" + std::to_string(nvrtc_version) + ".dll";
-        const Resource<HMODULE, FreeLibrary> dll_handle = LoadLibraryA(dll_path.c_str());
-#endif
 
         size_t d_pitch;
         int d_stride;

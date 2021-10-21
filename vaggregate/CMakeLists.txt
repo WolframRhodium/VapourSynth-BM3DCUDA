@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(BM3D_VAggregate VERSION 2.5 LANGUAGES CXX)
+project(BM3D_VAggregate VERSION 2.6 LANGUAGES CXX)
 
 if (ENABLE_AVISYNTHPLUS)
     add_library(bm3d_vaggregate_avs SHARED source_avs.cpp)
