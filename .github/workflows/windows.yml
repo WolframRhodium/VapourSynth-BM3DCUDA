@@ -14,14 +14,14 @@ jobs:
     - name: Checkout repo
       uses: actions/checkout@v2
       with:
-        fetch-depth: 0
+        fetch-depth: 1
 
     - name: Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
 
     - name: Setup CUDA
       run: |
-        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.5.1/network_installers/cuda_11.5.1_win10_network.exe
+        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.5.1/network_installers/cuda_11.5.1_windows_network.exe
         cuda_installer.exe -s nvcc_11.5 cudart_11.5 nvrtc_dev_11.5 visual_studio_integration_11.5
 
     - name: Download VapourSynth headers
