@@ -24,6 +24,10 @@ if (ENABLE_VAPOURSYNTH)
 
     add_library(bm3dcuda SHARED)
     target_link_libraries(bm3dcuda bm3dcuda_source bm3dcuda_kernel)
+
+    install(TARGETS bm3dcuda
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 
 if (ENABLE_AVISYNTHPLUS)
@@ -39,4 +43,8 @@ if (ENABLE_AVISYNTHPLUS)
 
     add_library(bm3dcuda_avs SHARED)
     target_link_libraries(bm3dcuda_avs bm3dcuda_source_avs bm3dcuda_kernel)
+
+    install(TARGETS bm3dcuda_avs
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()

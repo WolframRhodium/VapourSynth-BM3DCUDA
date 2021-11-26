@@ -9,13 +9,14 @@ jobs:
     - name: Checkout repo
       uses: actions/checkout@v2
       with:
-        fetch-depth: 0
+        fetch-depth: 1
 
-    - name: Setup GCC
+    - name: Setup GCC and Ninja
       run: |
         sudo apt-get update
-        sudo apt-get install -y g++-11
-        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 11 --slave /usr/bin/g++ g++ /usr/bin/g++-11 --slave /usr/bin/gcov gcov /usr/bin/gcov-11
+        sudo apt-get install -y g++-11 ninja-build
+        echo "CC=gcc-11" >> $GITHUB_ENV
+        echo "CXX=g++-11" >> $GITHUB_ENV
 
     - name: Setup CUDA
       run: |
@@ -42,7 +43,7 @@ jobs:
         mv vapoursynth*/ vapoursynth
 
     - name: Configure
-      run: cmake -S . -B build
+      run: cmake -S . -B build -G Ninja
         -D USE_NVRTC_STATIC=ON
         -D ENABLE_AVISYNTHPLUS=ON
         -D AVISYNTHPLUS_INCLUDE_DIRECTORY="`pwd`/avisynth+/avs_core/include"
@@ -54,10 +55,13 @@ jobs:
         -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86"
 
     - name: Build
-      run: cmake --build build --config Release --parallel `nproc` --verbose
+      run: cmake --build build --verbose
+
+    - name: Install
+      run: cmake --install build --prefix artifact
 
     # - name: Upload
     #   uses: actions/upload-artifact@v2
     #   with:
     #     name: BM3DCUDA-Linux
-    #     path: build/*/lib*.so
+    #     path: artifact

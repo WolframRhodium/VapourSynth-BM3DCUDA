@@ -21,7 +21,7 @@ jobs:
 
     - name: Setup CUDA
       run: |
-        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.5.0/network_installers/cuda_11.5.0_win10_network.exe
+        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.5.1/network_installers/cuda_11.5.1_windows_network.exe
         cuda_installer.exe -s nvcc_11.5 cudart_11.5 nvrtc_dev_11.5 visual_studio_integration_11.5
 
     - name: Download AviSynth+ headers
@@ -56,11 +56,14 @@ jobs:
         CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
         CUDA_PATH_V11_5: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
 
+    - name: Install
+      run: cmake --install build --prefix artifact
+
     - name: Upload
       uses: actions/upload-artifact@v2
       with:
         name: BM3DCUDA-Windows-x64
-        path: build/*/Release/*.dll
+        path: artifact
 
     - name: Configure (x86)
       run: cmake -S . -B build_x86 -G "Visual Studio 16 2019" -A Win32 
@@ -82,8 +85,11 @@ jobs:
         CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
         CUDA_PATH_V11_5: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
 
+    - name: Install (x86)
+      run: cmake --install build_x86 --prefix artifact_x86
+
     - name: Upload (x86)
       uses: actions/upload-artifact@v2
       with:
         name: BM3DCUDA-Windows-x86
-        path: build_x86/*/Release/bm3d*.dll
+        path: artifact_x86

@@ -44,5 +44,9 @@ else()
             endif()
             target_link_libraries(bm3dcuda_rtc PRIVATE CUDA::nvrtc)
         endif()
+
+        install(TARGETS bm3dcuda_rtc
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     endif()
 endif()
