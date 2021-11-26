@@ -21,7 +21,7 @@ jobs:
 
     - name: Setup CUDA
       run: |
-        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.5.0/network_installers/cuda_11.5.0_win10_network.exe
+        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.5.1/network_installers/cuda_11.5.1_win10_network.exe
         cuda_installer.exe -s nvcc_11.5 cudart_11.5 nvrtc_dev_11.5 visual_studio_integration_11.5
 
     - name: Download VapourSynth headers
@@ -46,8 +46,11 @@ jobs:
         CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
         CUDA_PATH_V11_5: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
 
+    - name: Install
+      run: cmake --install build --prefix artifact
+
     - name: Upload
       uses: actions/upload-artifact@v2
       with:
         name: VapourSynth-BM3DCUDA-Windows
-        path: build/*source/Release/bm3d*.dll
+        path: artifact

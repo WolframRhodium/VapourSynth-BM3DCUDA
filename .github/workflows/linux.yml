@@ -11,11 +11,12 @@ jobs:
       with:
         fetch-depth: 0
 
-    - name: Setup GCC
+    - name: Setup GCC and Ninja
       run: |
         sudo apt-get update
-        sudo apt-get install -y g++-11
-        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 11 --slave /usr/bin/g++ g++ /usr/bin/g++-11 --slave /usr/bin/gcov gcov /usr/bin/gcov-11
+        sudo apt-get install -y g++-11 ninja-build
+        echo "CC=gcc-11" >> $GITHUB_ENV
+        echo "CXX=g++-11" >> $GITHUB_ENV
 
     - name: Setup CUDA
       run: |
@@ -23,7 +24,6 @@ jobs:
         sudo mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600
         sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/7fa2af80.pub
         sudo add-apt-repository "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/ /"
-        sudo apt-get update
         sudo apt-get install -y cuda-nvcc-11-5 cuda-cudart-dev-11-5 cuda-nvrtc-dev-11-5
         echo "PATH=/usr/local/cuda/bin${PATH:+:${PATH}}" >> $GITHUB_ENV
         echo "CUDA_PATH=/usr/local/cuda" >> $GITHUB_ENV
@@ -36,7 +36,7 @@ jobs:
         mv vapoursynth*/ vapoursynth
 
     - name: Configure
-      run: cmake -S . -B build
+      run: cmake -S . -B build -G Ninja
         -D USE_NVRTC_STATIC=ON
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="`pwd`/vapoursynth/include"
         -D CMAKE_BUILD_TYPE=Release
@@ -45,10 +45,13 @@ jobs:
         -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86"
 
     - name: Build
-      run: cmake --build build --config Release --parallel `nproc` --verbose
+      run: cmake --build build --config Release --verbose
+
+    - name: Install
+      run: cmake --install build --prefix artifact
 
     # - name: Upload
     #  uses: actions/upload-artifact@v2
     #  with:
     #    name: VapourSynth-BM3DCUDA-Linux
-    #    path: build/*source/libbm3dcuda*.so
+    #    path: artifact

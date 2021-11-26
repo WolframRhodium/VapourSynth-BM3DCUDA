@@ -25,3 +25,7 @@ elseif ((CMAKE_CXX_COMPILER_ID STREQUAL "MSVC") OR
     target_compile_options(bm3dcpu PRIVATE "/arch:AVX2")
 
 endif()
+
+install(TARGETS bm3dcpu
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

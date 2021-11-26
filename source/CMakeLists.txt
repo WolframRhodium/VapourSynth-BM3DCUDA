@@ -21,3 +21,7 @@ set_target_properties(bm3dcuda_kernel PROPERTIES
 
 add_library(bm3dcuda SHARED)
 target_link_libraries(bm3dcuda bm3dcuda_source bm3dcuda_kernel)
+
+install(TARGETS bm3dcuda
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
