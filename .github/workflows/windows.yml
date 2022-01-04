@@ -49,7 +49,7 @@ jobs:
         -D ENABLE_CPU=OFF
         -D USE_NVRTC_STATIC=ON
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="$(pwd)\vapoursynth\include"
-        -D CMAKE_CXX_FLAGS="/fp:fast /arch:AVX"
+        -D CMAKE_CXX_FLAGS="/fp:fast /arch:AVX /EHsc"
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
         -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86-real"
         -D CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
@@ -63,36 +63,27 @@ jobs:
     - name: Install (CUDA)
       run: cmake --install build --prefix install
 
-    - name: Cache LLVM
-      id: cache-llvm
-      uses: actions/cache@v2
-      with:
-        path: llvm
-        key: ${{ runner.os }}-llvm-13.0.0
-
     - name: Setup LLVM
-      if: steps.cache-llvm.outputs.cache-hit != 'true'
       shell: bash
       run: |
         curl -s -o llvm-win64.exe -LJO https://github.com/llvm/llvm-project/releases/download/llvmorg-13.0.0/LLVM-13.0.0-win64.exe
         7z x -ollvm llvm-win64.exe
 
-    - name: Configure (CPU)
+    - name: Configure, build, install (CPU)
       shell: bash
-      run: cmake -S . -B build_cpu -G Ninja -LA
-        -D CMAKE_BUILD_TYPE=Release
-        -D ENABLE_CUDA=OFF
-        -D ENABLE_CPU=ON
-        -D VAPOURSYNTH_INCLUDE_DIRECTORY="$(pwd)\vapoursynth\include"
-        -D CMAKE_CXX_COMPILER="$(pwd)/llvm/bin/clang++.exe"
-        -D CMAKE_CXX_FLAGS="-mtune=skylake -ffast-math"
-        -D CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
-
-    - name: Build (CPU)
-      run: cmake --build build_cpu --verbose
-
-    - name: Install (CPU)
-      run: cmake --install build_cpu --prefix install
+      run: for arch in haswell skylake icelake-client znver1 znver2 znver3; do
+          cmake -S . -B build_cpu -G Ninja -LA
+            -D CMAKE_BUILD_TYPE=Release
+            -D ENABLE_CUDA=OFF
+            -D ENABLE_CPU=ON
+            -D VAPOURSYNTH_INCLUDE_DIRECTORY="$(pwd)\vapoursynth\include"
+            -D CMAKE_CXX_COMPILER="$(pwd)/llvm/bin/clang++.exe"
+            -D CMAKE_CXX_FLAGS="-mtune=${arch} -ffast-math"
+            -D CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          && cmake --build build_cpu --verbose
+          && cmake --install build_cpu --prefix temp
+          && mv temp/bin/bm3dcpu.dll install/bin/bm3dcpu-${arch}.dll -v;
+        done
 
     - name: Prepare for upload
       run: |

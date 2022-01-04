@@ -920,7 +920,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
     VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi
 ) {
 
-    auto d = static_cast<BM3DData *>(*instanceData);
+    auto * d = static_cast<BM3DData *>(*instanceData);
 
     if (activationReason == arInitial) {
         int start_frame = std::max(n - d->radius, 0);
@@ -978,10 +978,12 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
         }();
 
         const auto cast_fp = [](auto * p) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(p)>, decltype(p)>)
+            if constexpr (std::is_const_v<std::remove_pointer_t<decltype(p)>>) {
                 return reinterpret_cast<const float *>(p);
-            else
+            }
+            else {
                 return reinterpret_cast<float *>(p);
+            }
         };
 
         if (d->chroma) {
@@ -991,7 +993,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 std::vector<const float *> temp;
                 temp.reserve(3 * temporal_width);
                 for (int plane = 0; plane < 3; ++plane) {
-                    for (auto & frame : src_frames) {
+                    for (const auto & frame : src_frames) {
                         temp.push_back(cast_fp(vsapi->getReadPtr(frame, plane)));
                     }
                 }
@@ -1061,7 +1063,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                     std::vector<const float *> temp;
                     temp.reserve(3 * temporal_width);
                     for (int plane = 0; plane < 3; ++plane) {
-                        for (auto & frame : ref_frames) {
+                        for (const auto & frame : ref_frames) {
                             temp.push_back(cast_fp(vsapi->getReadPtr(frame, plane)));
                         }
                     }
@@ -1093,7 +1095,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                     std::vector srcps = [&](){
                         std::vector<const float *> temp;
                         temp.reserve(temporal_width);
-                        for (auto & frame : src_frames) {
+                        for (const auto & frame : src_frames) {
                             temp.push_back(cast_fp(vsapi->getReadPtr(frame, plane)));
                         }
                         return temp;
@@ -1155,7 +1157,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         std::vector refps = [&](){
                             std::vector<const float *> temp;
                             temp.reserve(temporal_width);
-                            for (auto & frame : ref_frames) {
+                            for (const auto & frame : ref_frames) {
                                 temp.push_back(cast_fp(vsapi->getReadPtr(frame, plane)));
                             }
                             return temp;
@@ -1254,7 +1256,7 @@ static void VS_CC BM3DCreate(
     if (error) {
         d->ref_node = nullptr;
     } else {
-        auto ref_vi = vsapi->getVideoInfo(d->ref_node);
+        const auto * ref_vi = vsapi->getVideoInfo(d->ref_node);
         if (ref_vi->format->id != d->vi->format->id) {
             return set_error("\"ref\" must be of the same format as \"clip\"");
         } else if (ref_vi->width != width || ref_vi->height != height ) {
