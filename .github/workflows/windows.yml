@@ -19,10 +19,21 @@ jobs:
     - name: Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
 
+    - name: Setup Ninja
+      run: pip install ninja
+
+    - name: Cache CUDA
+      id: cache-cuda
+      uses: actions/cache@v2
+      with:
+        path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
+        key: ${{ runner.os }}-cuda-11.5.1
+
     - name: Setup CUDA
+      if: steps.cache-cuda.outputs.cache-hit != 'true'
       run: |
         curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.5.1/network_installers/cuda_11.5.1_windows_network.exe
-        cuda_installer.exe -s nvcc_11.5 cudart_11.5 nvrtc_dev_11.5 visual_studio_integration_11.5
+        cuda_installer.exe -s nvcc_11.5 cudart_11.5 nvrtc_dev_11.5
 
     - name: Download VapourSynth headers
       run: |
@@ -30,27 +41,67 @@ jobs:
         unzip -q vs.zip
         mv vapoursynth-*/ vapoursynth/
 
-    - name: Configure
-      run: cmake -S . -B build -G "Visual Studio 16 2019" -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include"
+    - name: Configure (CUDA)
+      shell: bash
+      run: cmake -S . -B build -G Ninja -LA
+        -D CMAKE_BUILD_TYPE=Release
+        -D ENABLE_CUDA=ON
+        -D ENABLE_CPU=OFF
         -D USE_NVRTC_STATIC=ON
-        -D CMAKE_CXX_FLAGS_RELEASE="/fp:fast /arch:AVX"
+        -D VAPOURSYNTH_INCLUDE_DIRECTORY="$(pwd)\vapoursynth\include"
+        -D CMAKE_CXX_FLAGS="/fp:fast /arch:AVX"
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
-        -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86"
+        -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86-real"
+        -D CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
       env:
         CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
         CUDA_PATH_V11_5: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
 
-    - name: Build
-      run: cmake --build build --config Release --parallel %NUMBER_OF_PROCESSORS% --verbose
-      env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
-        CUDA_PATH_V11_5: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
+    - name: Build (CUDA)
+      run: cmake --build build --verbose
 
-    - name: Install
-      run: cmake --install build --prefix artifact
+    - name: Install (CUDA)
+      run: cmake --install build --prefix install
+
+    - name: Cache LLVM
+      id: cache-llvm
+      uses: actions/cache@v2
+      with:
+        path: llvm
+        key: ${{ runner.os }}-llvm-13.0.0
+
+    - name: Setup LLVM
+      if: steps.cache-llvm.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        curl -s -o llvm-win64.exe -LJO https://github.com/llvm/llvm-project/releases/download/llvmorg-13.0.0/LLVM-13.0.0-win64.exe
+        7z x -ollvm llvm-win64.exe
+
+    - name: Configure (CPU)
+      shell: bash
+      run: cmake -S . -B build_cpu -G Ninja -LA
+        -D CMAKE_BUILD_TYPE=Release
+        -D ENABLE_CUDA=OFF
+        -D ENABLE_CPU=ON
+        -D VAPOURSYNTH_INCLUDE_DIRECTORY="$(pwd)\vapoursynth\include"
+        -D CMAKE_CXX_COMPILER="$(pwd)/llvm/bin/clang++.exe"
+        -D CMAKE_CXX_FLAGS="-mtune=skylake -ffast-math"
+        -D CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+
+    - name: Build (CPU)
+      run: cmake --build build_cpu --verbose
+
+    - name: Install (CPU)
+      run: cmake --install build_cpu --prefix install
+
+    - name: Prepare for upload
+      run: |
+        mkdir artifact
+        copy install\bin\*.dll artifact
 
     - name: Upload
       uses: actions/upload-artifact@v2
       with:
         name: VapourSynth-BM3DCUDA-Windows
         path: artifact
+
