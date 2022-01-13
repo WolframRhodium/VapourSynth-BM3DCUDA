@@ -4,7 +4,7 @@ on: [push, workflow_dispatch]
 
 jobs:
   build-windows:
-    runs-on: windows-2019
+    runs-on: windows-2022
 
     defaults:
       run:
@@ -27,13 +27,13 @@ jobs:
       uses: actions/cache@v2
       with:
         path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
-        key: ${{ runner.os }}-cuda-11.5.1
+        key: ${{ runner.os }}-cuda-11.6.0
 
     - name: Setup CUDA
       if: steps.cache-cuda.outputs.cache-hit != 'true'
       run: |
-        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.5.1/network_installers/cuda_11.5.1_windows_network.exe
-        cuda_installer.exe -s nvcc_11.5 cudart_11.5 nvrtc_dev_11.5
+        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.6.0/network_installers/cuda_11.6.0_windows_network.exe
+        cuda_installer.exe -s nvcc_11.6 cudart_11.6 nvrtc_dev_11.6
 
     - name: Download VapourSynth headers
       run: |
@@ -54,8 +54,8 @@ jobs:
         -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86-real"
         -D CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
       env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
-        CUDA_PATH_V11_5: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
+        CUDA_PATH_V11_6: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
 
     - name: Build (CUDA)
       run: cmake --build build --verbose
