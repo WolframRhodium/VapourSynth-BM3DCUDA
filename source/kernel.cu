@@ -363,7 +363,7 @@ static inline float collaborative_wiener(
 // BM3D kernel
 template <bool temporal=false, bool chroma=false, bool final_=false>
 __global__
-#if __CUDA_ARCH__ == 750 || __CUDA_ARCH__ == 860
+#if __CUDA_ARCH__ == 350 || __CUDA_ARCH__ == 750 || __CUDA_ARCH__ == 860
 __launch_bounds__(32, 16)
 #else
 __launch_bounds__(32, 32)

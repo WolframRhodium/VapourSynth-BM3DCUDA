@@ -4,7 +4,7 @@ on: [push, workflow_dispatch]
 
 jobs:
   build-windows:
-    runs-on: windows-2019
+    runs-on: windows-2022
 
     defaults:
       run:
@@ -21,12 +21,12 @@ jobs:
 
     - name: Setup CUDA
       run: |
-        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.5.1/network_installers/cuda_11.5.1_windows_network.exe
-        cuda_installer.exe -s nvcc_11.5 cudart_11.5 nvrtc_dev_11.5 visual_studio_integration_11.5
+        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.6.0/network_installers/cuda_11.6.0_windows_network.exe
+        cuda_installer.exe -s nvcc_11.6 cudart_11.6 nvrtc_dev_11.6 visual_studio_integration_11.6
 
     - name: Download AviSynth+ headers
       run: |
-        curl -s -o avs+.zip -L https://github.com/AviSynth/AviSynthPlus/archive/refs/tags/v3.7.0.zip
+        curl -s -o avs+.zip -L https://github.com/AviSynth/AviSynthPlus/archive/refs/tags/v3.7.1a.zip
         unzip -q avs+.zip
         mv AviSynthPlus*/ avisynth+
 
@@ -37,24 +37,24 @@ jobs:
         mv vapoursynth-*/ vapoursynth/
 
     - name: Configure
-      run: cmake -S . -B build -G "Visual Studio 16 2019" -A x64
+      run: cmake -S . -B build -A x64
         -D USE_NVRTC_STATIC=ON
         -D ENABLE_AVISYNTHPLUS=ON
         -D AVISYNTHPLUS_INCLUDE_DIRECTORY="%cd%\avisynth+\avs_core\include"
         -D ENABLE_VAPOURSYNTH=ON
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include"
-        -D CMAKE_CXX_FLAGS_RELEASE="/fp:fast /arch:AVX"
+        -D CMAKE_CXX_FLAGS_RELEASE="/fp:fast"
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
-        -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86"
+        -D CMAKE_CUDA_ARCHITECTURES="35-real;50;61-real;75-real;86"
       env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
-        CUDA_PATH_V11_5: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
+        CUDA_PATH_V11_6: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
 
     - name: Build
       run: cmake --build build --config Release --parallel %NUMBER_OF_PROCESSORS% --verbose
       env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
-        CUDA_PATH_V11_5: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
+        CUDA_PATH_V11_6: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
 
     - name: Install
       run: cmake --install build --prefix artifact
@@ -66,24 +66,24 @@ jobs:
         path: artifact
 
     - name: Configure (x86)
-      run: cmake -S . -B build_x86 -G "Visual Studio 16 2019" -A Win32 
+      run: cmake -S . -B build_x86 -A Win32 
         -D USE_NVRTC_STATIC=ON
         -D ENABLE_AVISYNTHPLUS=ON
         -D AVISYNTHPLUS_INCLUDE_DIRECTORY="%cd%\avisynth+\avs_core\include"
         -D ENABLE_VAPOURSYNTH=ON
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include"
-        -D CMAKE_CXX_FLAGS_RELEASE="/fp:fast /arch:AVX"
+        -D CMAKE_CXX_FLAGS_RELEASE="/fp:fast"
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
-        -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86"
+        -D CMAKE_CUDA_ARCHITECTURES="35-real;50;61-real;75-real;86"
       env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
-        CUDA_PATH_V11_5: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
+        CUDA_PATH_V11_6: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
 
     - name: Build (x86)
       run: cmake --build build_x86 --config Release --parallel %NUMBER_OF_PROCESSORS% --verbose
       env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
-        CUDA_PATH_V11_5: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.5
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
+        CUDA_PATH_V11_6: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
 
     - name: Install (x86)
       run: cmake --install build_x86 --prefix artifact_x86

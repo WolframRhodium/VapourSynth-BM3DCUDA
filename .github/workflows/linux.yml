@@ -25,14 +25,14 @@ jobs:
         sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/7fa2af80.pub
         sudo add-apt-repository "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/ /"
         sudo apt-get update
-        sudo apt-get install -y cuda-nvcc-11-5 cuda-cudart-dev-11-5 cuda-nvrtc-dev-11-5
+        sudo apt-get install -y cuda-nvcc-11-6 cuda-cudart-dev-11-6 cuda-nvrtc-dev-11-6
         echo "PATH=/usr/local/cuda/bin${PATH:+:${PATH}}" >> $GITHUB_ENV
         echo "CUDA_PATH=/usr/local/cuda" >> $GITHUB_ENV
         echo "LD_LIBRARY_PATH=/usr/local/cuda/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" >> $GITHUB_ENV
 
     - name: Download AviSynth+ headers
       run: |
-        wget -q -O avs+.zip https://github.com/AviSynth/AviSynthPlus/archive/refs/tags/v3.7.0.zip
+        wget -q -O avs+.zip https://github.com/AviSynth/AviSynthPlus/archive/refs/tags/v3.7.1a.zip
         unzip -q avs+.zip
         mv AviSynthPlus*/ avisynth+
 
@@ -50,9 +50,9 @@ jobs:
         -D ENABLE_VAPOURSYNTH=ON
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="`pwd`/vapoursynth/include"
         -D CMAKE_BUILD_TYPE=Release
-        -D CMAKE_CXX_FLAGS_RELEASE="-ffast-math -march=x86-64-v3"
+        -D CMAKE_CXX_FLAGS_RELEASE="-ffast-math"
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
-        -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86"
+        -D CMAKE_CUDA_ARCHITECTURES="35-real;50;61-real;75-real;86"
 
     - name: Build
       run: cmake --build build --verbose
