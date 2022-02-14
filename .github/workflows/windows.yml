@@ -24,6 +24,9 @@ jobs:
         curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.6.0/network_installers/cuda_11.6.0_windows_network.exe
         cuda_installer.exe -s nvcc_11.6 cudart_11.6 nvrtc_dev_11.6 visual_studio_integration_11.6
 
+    - name: Setup Ninja
+      run: pip install ninja
+
     - name: Download AviSynth+ headers
       run: |
         curl -s -o avs+.zip -L https://github.com/AviSynth/AviSynthPlus/archive/refs/tags/v3.7.1a.zip
@@ -37,7 +40,7 @@ jobs:
         mv vapoursynth-*/ vapoursynth/
 
     - name: Configure
-      run: cmake -S . -B build -A x64
+      run: cmake -S . -B build -G Ninja
         -D USE_NVRTC_STATIC=ON
         -D ENABLE_AVISYNTHPLUS=ON
         -D AVISYNTHPLUS_INCLUDE_DIRECTORY="%cd%\avisynth+\avs_core\include"
