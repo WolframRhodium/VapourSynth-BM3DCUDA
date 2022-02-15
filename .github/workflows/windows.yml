@@ -41,12 +41,13 @@ jobs:
 
     - name: Configure
       run: cmake -S . -B build -G Ninja
+        -D CMAKE_BUILD_TYPE=Release
         -D USE_NVRTC_STATIC=ON
         -D ENABLE_AVISYNTHPLUS=ON
         -D AVISYNTHPLUS_INCLUDE_DIRECTORY="%cd%\avisynth+\avs_core\include"
         -D ENABLE_VAPOURSYNTH=ON
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include"
-        -D CMAKE_CXX_FLAGS_RELEASE="/fp:fast /arch:AVX"
+        -D CMAKE_CXX_FLAGS="/fp:fast /arch:AVX"
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
         -D CMAKE_CUDA_ARCHITECTURES="35-real;50;61-real;75-real;86"
       env:
@@ -54,7 +55,7 @@ jobs:
         CUDA_PATH_V11_6: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
 
     - name: Build
-      run: cmake --build build --config Release --parallel %NUMBER_OF_PROCESSORS% --verbose
+      run: cmake --build build --parallel %NUMBER_OF_PROCESSORS% --verbose
       env:
         CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
         CUDA_PATH_V11_6: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
@@ -75,7 +76,7 @@ jobs:
         -D AVISYNTHPLUS_INCLUDE_DIRECTORY="%cd%\avisynth+\avs_core\include"
         -D ENABLE_VAPOURSYNTH=ON
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include"
-        -D CMAKE_CXX_FLAGS_RELEASE="/fp:fast /arch:AVX"
+        -D CMAKE_CXX_FLAGS="/fp:fast"
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
         -D CMAKE_CUDA_ARCHITECTURES="35-real;50;61-real;75-real;86"
       env:
