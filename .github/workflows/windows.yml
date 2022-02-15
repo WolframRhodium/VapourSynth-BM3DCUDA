@@ -46,10 +46,9 @@ jobs:
         -D AVISYNTHPLUS_INCLUDE_DIRECTORY="%cd%\avisynth+\avs_core\include"
         -D ENABLE_VAPOURSYNTH=ON
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include"
-        -D CMAKE_CXX_FLAGS_RELEASE="/fp:fast"
+        -D CMAKE_CXX_FLAGS_RELEASE="/fp:fast /arch:AVX"
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
         -D CMAKE_CUDA_ARCHITECTURES="35-real;50;61-real;75-real;86"
-        -D CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
       env:
         CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
         CUDA_PATH_V11_6: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
@@ -76,10 +75,9 @@ jobs:
         -D AVISYNTHPLUS_INCLUDE_DIRECTORY="%cd%\avisynth+\avs_core\include"
         -D ENABLE_VAPOURSYNTH=ON
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include"
-        -D CMAKE_CXX_FLAGS_RELEASE="/fp:fast"
+        -D CMAKE_CXX_FLAGS_RELEASE="/fp:fast /arch:AVX"
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
         -D CMAKE_CUDA_ARCHITECTURES="35-real;50;61-real;75-real;86"
-        -D CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
       env:
         CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
         CUDA_PATH_V11_6: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
