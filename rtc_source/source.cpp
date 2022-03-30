@@ -1060,7 +1060,7 @@ static void VS_CC BM3DCreate(
     vsapi->createFilter(
         in, out, "BM3D",
         BM3DInit, BM3DGetFrame, BM3DFree,
-        fmParallel, 0, d.release(), core
+        fmParallelRequests, 0, d.release(), core
     );
 }
 
