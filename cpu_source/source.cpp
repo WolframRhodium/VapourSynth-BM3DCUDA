@@ -792,9 +792,9 @@ static inline void bm3d(
             std::array<float, 8> errors;
             errors.fill(std::numeric_limits<float>::max());
 
-            std::array<int, 8> index_x;
-            std::array<int, 8> index_y;
-            std::array<int, 8> index_z;
+            std::array<int, 8> index_x {x};
+            std::array<int, 8> index_y {y};
+            std::array<int, 8> index_z {center};
 
             if constexpr (temporal) {
                 decltype(srcps) input;
