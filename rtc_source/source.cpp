@@ -505,6 +505,14 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                     d->vi->height * 2 * temporal_width,
                     src, core)
             );
+            for (int i = 0; i < d->vi->format->numPlanes; ++i) {
+                if (!d->process[i]) {
+                    auto ptr = vsapi->getWritePtr(dst.get(), i);
+                    auto height = vsapi->getFrameHeight(dst.get(), i);
+                    auto pitch = vsapi->getStride(dst.get(), i);
+                    memset(ptr, 0, height * pitch);
+                }
+            }
         } else {
             const VSFrameRef * fr[] = {
                 d->process[0] ? nullptr : src,
