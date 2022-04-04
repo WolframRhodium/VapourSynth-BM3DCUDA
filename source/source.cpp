@@ -157,6 +157,7 @@ struct BM3DData {
     bool chroma;
     bool process[3]; // sigma != 0
     bool final_;
+    bool zero_init;
 
     int d_pitch;
     int device_id;
@@ -273,7 +274,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                     src, core)
             );
             for (int i = 0; i < d->vi->format->numPlanes; ++i) {
-                if (!d->process[i]) {
+                if (d->zero_init && !d->process[i]) {
                     auto ptr = vsapi->getWritePtr(dst.get(), i);
                     auto height = vsapi->getFrameHeight(dst.get(), i);
                     auto pitch = vsapi->getStride(dst.get(), i);
@@ -627,6 +628,11 @@ static void VS_CC BM3DCreate(
         return (temp ? std::ldexp(1.0f, temp) : 0.0f);
     }();
 
+    d->zero_init = !!vsapi->propGetInt(in, "zero_init", 0, &error);
+    if (error) {
+        d->zero_init = true;
+    }
+
     // GPU resource allocation
     {
         d->semaphore.current.store(num_copy_engines - 1, std::memory_order::relaxed);
@@ -910,12 +916,6 @@ static void VS_CC BM3Dv2Create(
         return ;
     }
 
-    int error;
-    int radius = vsapi->propGetInt(in, "radius", 0, &error);
-    if (error) {
-        radius = 0;
-    }
-
     auto map = vsapi->invoke(myself, "BM3D", in);
     if (auto error = vsapi->getError(map); error) {
         vsapi->setError(out, error);
@@ -924,6 +924,11 @@ static void VS_CC BM3Dv2Create(
         return ;
     }
 
+    int error;
+    int radius = vsapi->propGetInt(in, "radius", 0, &error);
+    if (error) {
+        radius = 0;
+    }
     if (radius == 0) {
         // spatial BM3D should handle everything itself
         auto node = vsapi->propGetNode(map, "clip", 0, nullptr);
@@ -982,6 +987,7 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
         "device_id:int:opt;"
         "fast:int:opt;"
         "extractor_exp:int:opt;"
+        "zero_init:int:opt;"
     };
 
     registerFunc("BM3D", bm3d_args, BM3DCreate, nullptr, plugin);

@@ -78,6 +78,7 @@ struct BM3DData {
     int ps_num[3];
     int ps_range[3];
     bool chroma;
+    bool zero_init;
 
     bool process[3]; // sigma != 0
 
@@ -978,7 +979,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                     d->vi->format, d->vi->width, d->vi->height,
                     fr, pl, src_frame, core);
                 for (int i = 0; i < d->vi->format->numPlanes; ++i) {
-                    if (!d->process[i]) {
+                    if (d->zero_init && !d->process[i]) {
                         auto ptr = vsapi->getWritePtr(frame, i);
                         auto height = vsapi->getFrameHeight(frame, i);
                         auto pitch = vsapi->getStride(frame, i);
@@ -1368,6 +1369,11 @@ static void VS_CC BM3DCreate(
     }
     d->chroma = chroma;
 
+    d->zero_init = !!vsapi->propGetInt(in, "zero_init", 0, &error);
+    if (error) {
+        d->zero_init = true;
+    }
+
     if (radius == 0) {
         struct VSCoreInfo ci;
         vsapi->getCoreInfo2(core, &ci);
@@ -1420,7 +1426,7 @@ static const VSFrameRef *VS_CC VAggregateGetFrame(
         }
         vsapi->requestFrameFilter(n, d->src_node, frameCtx);
     } else if (activationReason == arAllFramesReady) {
-        const VSFrameRef * src_frame = vsapi->getFrameFilter(n, d->src_node, frameCtx); 
+        const VSFrameRef * src_frame = vsapi->getFrameFilter(n, d->src_node, frameCtx);
 
         std::vector<const VSFrameRef *> vbm3d_frames;
         vbm3d_frames.reserve(2 * d->radius + 1);
@@ -1580,12 +1586,6 @@ static void VS_CC BM3Dv2Create(
         return ;
     }
 
-    int error;
-    int radius = vsapi->propGetInt(in, "radius", 0, &error);
-    if (error) {
-        radius = 0;
-    }
-
     auto map = vsapi->invoke(myself, "BM3D", in);
     if (auto error = vsapi->getError(map); error) {
         vsapi->setError(out, error);
@@ -1594,6 +1594,11 @@ static void VS_CC BM3Dv2Create(
         return ;
     }
 
+    int error;
+    int radius = vsapi->propGetInt(in, "radius", 0, &error);
+    if (error) {
+        radius = 0;
+    }
     if (radius == 0) {
         // spatial BM3D should handle everything itself
         auto node = vsapi->propGetNode(map, "clip", 0, nullptr);
@@ -1648,6 +1653,7 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
         "ps_num:int:opt;"
         "ps_range:int:opt;"
         "chroma:int:opt;"
+        "zero_init:int:opt;"
     };
 
     registerFunc("BM3D", bm3d_args, BM3DCreate, nullptr, plugin);
