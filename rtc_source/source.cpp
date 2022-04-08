@@ -29,6 +29,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -1093,6 +1094,7 @@ struct VAggregateData {
     int radius;
 
     std::unordered_map<std::thread::id, float *> buffer;
+    std::shared_mutex buffer_lock;
 };
 
 static void VS_CC VAggregateInit(
@@ -1132,11 +1134,23 @@ static const VSFrameRef *VS_CC VAggregateGetFrame(
 
         auto thread_id = std::this_thread::get_id();
 
-        float * buffer;
+        float * buffer {};
         {
+            const auto thread_id = std::this_thread::get_id();
+            bool init = true;
+
+            d->buffer_lock.lock_shared();
+
             try {
-                buffer = d->buffer.at(thread_id);
+                const auto & const_buffer = d->buffer;
+                buffer = const_buffer.at(thread_id);
             } catch (const std::out_of_range &) {
+                init = false;
+            }
+
+            d->buffer_lock.unlock_shared();
+
+            if (!init) {
                 assert(d->process[0] || d->src_vi->numFrames > 1);
 
                 const int max_height {
@@ -1149,7 +1163,10 @@ static const VSFrameRef *VS_CC VAggregateGetFrame(
                     vsapi->getStride(src_frame, 0) :
                     vsapi->getStride(src_frame, 1)
                 };
+
                 buffer = reinterpret_cast<float *>(std::malloc(2 * max_height * max_pitch));
+
+                std::lock_guard _ { d->buffer_lock };
                 d->buffer.emplace(thread_id, buffer);
             }
         }
