@@ -786,7 +786,7 @@ static const VSFrameRef *VS_CC VAggregateGetFrame(
             d->buffer_lock.unlock_shared();
 
             if (!init) {
-                assert(d->process[0] || d->src_vi->numFrames > 1);
+                assert(d->process[0] || d->src_vi->format->numPlanes > 1);
 
                 const int max_height {
                     d->process[0] ?
