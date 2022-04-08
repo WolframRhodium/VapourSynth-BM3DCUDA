@@ -49,6 +49,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <mutex>
+#include <shared_mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -83,6 +85,7 @@ struct BM3DData {
     bool process[3]; // sigma != 0
 
     std::unordered_map<std::thread::id, float *> buffer; // not used by V-BM3D
+    std::shared_mutex buffer_lock;
 };
 
 // shuffle_up({0, 1, ..., 7}) => {0, 0, 1, ..., 6}
@@ -1032,19 +1035,30 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             const int ps_num = d->ps_num[0];
             const int ps_range = d->ps_range[0];
 
-            float * const buffer = [&]() -> float * {
-                if (radius == 0) {
-                    const auto thread_id = std::this_thread::get_id();
-                    if (d->buffer.count(thread_id) == 0) {
-                        float * buffer = vs_aligned_malloc<float>(
-                            sizeof(float) * stride * height * 2 * num_planes(chroma), 32);
-                        d->buffer.emplace(thread_id, buffer);
-                    }
-                    return d->buffer[thread_id];
-                } else {
-                    return nullptr;
+            float * buffer {};
+            if (radius == 0) {
+                const auto thread_id = std::this_thread::get_id();
+                bool init = true;
+
+                d->buffer_lock.lock_shared();
+
+                try {
+                    const auto & const_buffer = d->buffer;
+                    buffer = const_buffer.at(thread_id);
+                } catch (const std::out_of_range &) {
+                    init = false;
                 }
-            }();
+
+                d->buffer_lock.unlock_shared();
+
+                if (!init) {
+                    buffer = vs_aligned_malloc<float>(
+                        sizeof(float) * stride * height * 2 * num_planes(chroma), 32);
+
+                    std::lock_guard _ { d->buffer_lock };
+                    d->buffer.emplace(thread_id, buffer);
+                }
+            }
 
             if (radius == 0) {
                 memset(buffer, 0, sizeof(float) * stride * height * 2 * num_planes(chroma));
@@ -1128,19 +1142,30 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                     const int ps_num = d->ps_num[plane];
                     const int ps_range = d->ps_range[plane];
 
-                    float * const buffer = [&]() -> float * {
-                        if (radius == 0) {
-                            const auto thread_id = std::this_thread::get_id();
-                            if (d->buffer.count(thread_id) == 0) {
-                                float * buffer = vs_aligned_malloc<float>(
-                                    sizeof(float) * stride * height * 2 * num_planes(chroma), 32);
-                                d->buffer.emplace(thread_id, buffer);
-                            }
-                            return d->buffer[thread_id];
-                        } else {
-                            return nullptr;
+                    float * buffer {};
+                    if (radius == 0) {
+                        const auto thread_id = std::this_thread::get_id();
+                        bool init = true;
+
+                        d->buffer_lock.lock_shared();
+
+                        try {
+                            const auto & const_buffer = d->buffer;
+                            buffer = const_buffer.at(thread_id);
+                        } catch (const std::out_of_range &) {
+                            init = false;
                         }
-                    }();
+
+                        d->buffer_lock.unlock_shared();
+
+                        if (!init) {
+                            buffer = vs_aligned_malloc<float>(
+                                sizeof(float) * stride * height * 2 * num_planes(chroma), 32);
+
+                            std::lock_guard _ { d->buffer_lock };
+                            d->buffer.emplace(thread_id, buffer);
+                        }
+                    }
 
                     if (radius == 0) {
                         memset(buffer, 0, sizeof(float) * stride * height * 2 * num_planes(chroma));
@@ -1398,6 +1423,7 @@ struct VAggregateData {
     int radius;
 
     std::unordered_map<std::thread::id, float *> buffer;
+    std::shared_mutex buffer_lock;
 };
 
 static void VS_CC VAggregateInit(
@@ -1435,13 +1461,23 @@ static const VSFrameRef *VS_CC VAggregateGetFrame(
             vbm3d_frames.emplace_back(vsapi->getFrameFilter(frame_id, d->node, frameCtx));
         }
 
-        auto thread_id = std::this_thread::get_id();
-
-        float * buffer;
+        float * buffer {};
         {
+            const auto thread_id = std::this_thread::get_id();
+            bool init = true;
+
+            d->buffer_lock.lock_shared();
+
             try {
-                buffer = d->buffer.at(thread_id);
+                const auto & const_buffer = d->buffer;
+                buffer = const_buffer.at(thread_id);
             } catch (const std::out_of_range &) {
+                init = false;
+            }
+
+            d->buffer_lock.unlock_shared();
+
+            if (!init) {
                 assert(d->process[0] || d->src_vi->numFrames > 1);
 
                 const int max_height {
@@ -1454,7 +1490,10 @@ static const VSFrameRef *VS_CC VAggregateGetFrame(
                     vsapi->getStride(src_frame, 0) :
                     vsapi->getStride(src_frame, 1)
                 };
+
                 buffer = reinterpret_cast<float *>(std::malloc(2 * max_height * max_pitch));
+
+                std::lock_guard _ { d->buffer_lock };
                 d->buffer.emplace(thread_id, buffer);
             }
         }
