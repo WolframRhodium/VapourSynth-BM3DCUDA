@@ -443,6 +443,11 @@ static void bm3d(
 
                 const float * srcp = srcp_col;
 
+                // promote coherent execution
+                #if __CUDA_ARCH__ >= 700 && __CUDACC_VER_MAJOR__ >= 11 && __CUDACC_VER_MINOR__ >= 5
+                __syncwarp(membermask);
+                #endif
+
                 #pragma unroll
                 for (int i = 0; i < 8; ++i) {
                     float val = current_patch[i] - srcp[i * stride];
@@ -529,6 +534,11 @@ static void bm3d(
                             float errors[2] { 0.0f };
 
                             const float * srcp = srcp_col;
+
+                            // promote coherent execution
+                            #if __CUDA_ARCH__ >= 700 && __CUDACC_VER_MAJOR__ >= 11 && __CUDACC_VER_MINOR__ >= 5
+                            __syncwarp(membermask);
+                            #endif
 
                             #pragma unroll
                             for (int j = 0; j < 8; ++j) {
