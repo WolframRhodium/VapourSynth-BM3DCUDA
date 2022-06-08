@@ -788,18 +788,13 @@ static const VSFrameRef *VS_CC VAggregateGetFrame(
             if (!init) {
                 assert(d->process[0] || d->src_vi->format->numPlanes > 1);
 
-                const int max_height {
+                const int max_width {
                     d->process[0] ?
-                    vsapi->getFrameHeight(src_frame, 0) :
-                    vsapi->getFrameHeight(src_frame, 1)
-                };
-                const int max_pitch {
-                    d->process[0] ?
-                    vsapi->getStride(src_frame, 0) :
-                    vsapi->getStride(src_frame, 1)
+                    vsapi->getFrameWidth(src_frame, 0) :
+                    vsapi->getFrameWidth(src_frame, 1)
                 };
 
-                buffer = reinterpret_cast<float *>(std::malloc(2 * max_height * max_pitch));
+                buffer = reinterpret_cast<float *>(std::malloc(2 * max_width * sizeof(float)));
 
                 std::lock_guard _ { d->buffer_lock };
                 d->buffer.emplace(thread_id, buffer);
@@ -823,25 +818,32 @@ static const VSFrameRef *VS_CC VAggregateGetFrame(
                 int plane_height = vsapi->getFrameHeight(src_frame, plane);
                 int plane_stride = vsapi->getStride(src_frame, plane) / sizeof(float);
 
-                memset(buffer, 0, 2 * plane_height * plane_stride * sizeof(float));
-
+                std::vector<const float *> srcps;
+                srcps.reserve(2 * d->radius + 1);
                 for (int i = 0; i < 2 * d->radius + 1; ++i) {
-                    auto agg_src = reinterpret_cast<const float *>(vsapi->getReadPtr(vbm3d_frames[i], plane));
-                    agg_src += (2 * d->radius - i) * 2 * plane_height * plane_stride;
-
-                    float * agg_dst = buffer;
-
-                    for (int y = 0; y < 2 * plane_height; ++y) {
-                        for (int x = 0; x < plane_width; ++x) {
-                            agg_dst[x] += agg_src[x];
-                        }
-                        agg_src += plane_stride;
-                        agg_dst += plane_stride;
-                    }
+                    srcps.emplace_back(reinterpret_cast<const float *>(vsapi->getReadPtr(vbm3d_frames[i], plane)));
                 }
 
                 auto dstp = reinterpret_cast<float *>(vsapi->getWritePtr(dst_frame, plane));
-                Aggregation(dstp, plane_stride, buffer, plane_stride, plane_width, plane_height);
+
+                for (int y = 0; y < plane_height; ++y) {
+                    memset(buffer, 0, 2 * plane_width * sizeof(float));
+                    for (int i = 0; i < 2 * d->radius + 1; ++i) {
+                        const float * agg_src = srcps[i];
+                        agg_src += ((2 * d->radius - i) * 2 * plane_height + y) * plane_stride;
+                        for (int x = 0; x < plane_width; ++x) {
+                            buffer[x] += agg_src[x];
+                        }
+                        agg_src += plane_height * plane_stride;
+                        for (int x = 0; x < plane_width; ++x) {
+                            buffer[plane_width + x] += agg_src[x];
+                        }
+                    }
+                    for (int x = 0; x < plane_width; ++x) {
+                        dstp[x] = buffer[x] / buffer[plane_width + x];
+                    }
+                    dstp += plane_stride;
+                }
             }
         }
 
