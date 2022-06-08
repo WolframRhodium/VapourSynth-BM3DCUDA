@@ -1,6 +1,13 @@
 name: Build (Windows)
 
-on: [push, workflow_dispatch]
+on:
+  push:
+    paths:
+      - 'source/*'
+      - 'cpu_source/*'
+      - 'rtc_source/*'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
 
 jobs:
   build-windows:
