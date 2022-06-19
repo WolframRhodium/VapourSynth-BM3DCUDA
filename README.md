@@ -109,7 +109,7 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
 
 ## Notes
 
-- `bm3d.VAggregate` should be called after temporal filtering, as in `VapourSynth-BM3D`.
+- `bm3d.VAggregate` should be called after temporal filtering, as in `VapourSynth-BM3D`. Alternatively, you may use the `BM3Dv2()` interface for both spatial and temporal denoising in one step.
 
 - The `_rtc` version has three additional experimental parameters:
 
