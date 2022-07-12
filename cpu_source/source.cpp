@@ -978,9 +978,13 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                     d->process[2] ? nullptr : src_frame
                 };
                 const int pl[] { 0, 1, 2 };
-                auto frame = vsapi->newVideoFrame2(
+                return vsapi->newVideoFrame2(
                     d->vi->format, d->vi->width, d->vi->height,
                     fr, pl, src_frame, core);
+            } else {
+                auto frame = vsapi->newVideoFrame(
+                    d->vi->format, d->vi->width, d->vi->height * 2 * temporal_width,
+                    src_frame, core);
                 for (int i = 0; i < d->vi->format->numPlanes; ++i) {
                     if (d->zero_init && !d->process[i]) {
                         auto ptr = vsapi->getWritePtr(frame, i);
@@ -990,10 +994,6 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                     }
                 }
                 return frame;
-            } else {
-                return vsapi->newVideoFrame(
-                    d->vi->format, d->vi->width, d->vi->height * 2 * temporal_width,
-                    src_frame, core);
             }
         }();
 
