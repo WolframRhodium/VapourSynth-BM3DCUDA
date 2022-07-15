@@ -1522,7 +1522,11 @@ static const VSFrameRef *VS_CC VAggregateGetFrame(
                     memset(buffer, 0, 2 * plane_width * sizeof(float));
                     for (int i = 0; i < 2 * d->radius + 1; ++i) {
                         auto agg_src = srcps[i];
-                        agg_src += ((2 * d->radius - i) * 2 * plane_height + y) * plane_stride;
+                        // bm3d.VAggregate implements zero padding in temporal dimension
+                        // here we implements replication padding
+                        agg_src += (
+                            std::clamp(2 * d->radius - i, n - d->src_vi->numFrames + 1 + d->radius, n + d->radius)
+                            * 2 * plane_height + y) * plane_stride;
                         for (int x = 0; x < plane_width; ++x) {
                             buffer[x] += agg_src[x];
                         }
