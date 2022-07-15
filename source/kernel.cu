@@ -442,6 +442,11 @@ static void bm3d(
                 float errors[2] { 0.0f };
 
                 const float * srcp = srcp_col;
+                
+                // promote coherent execution
+                #if __CUDA_ARCH__ >= 700
+                __syncwarp(membermask);
+                #endif
 
                 #pragma unroll
                 for (int i = 0; i < 8; ++i) {
@@ -529,6 +534,11 @@ static void bm3d(
                             float errors[2] { 0.0f };
 
                             const float * srcp = srcp_col;
+                            
+                            // promote coherent execution
+                            #if __CUDA_ARCH__ >= 700
+                            __syncwarp(membermask);
+                            #endif
 
                             #pragma unroll
                             for (int j = 0; j < 8; ++j) {
