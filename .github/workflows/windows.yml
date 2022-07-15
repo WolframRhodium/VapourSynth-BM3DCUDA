@@ -22,7 +22,7 @@ jobs:
     - name: Setup CUDA
       run: |
         curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.7.0/network_installers/cuda_11.7.0_windows_network.exe
-        cuda_installer.exe -s nvcc_11.7 cudart_11.7 nvrtc_dev_11.7
+        cuda_installer.exe -s nvcc_11.7 cudart_11.7 nvrtc_dev_11.7 visual_studio_integration_11.7
 
     - name: Setup Ninja
       run: pip install ninja
@@ -45,7 +45,7 @@ jobs:
         -D USE_NVRTC_STATIC=ON
         -D ENABLE_AVISYNTHPLUS=ON
         -D AVISYNTHPLUS_INCLUDE_DIRECTORY="%cd%\avisynth+\avs_core\include"
-        -D ENABLE_VAPOURSYNTH=ON
+        -D ENABLE_VAPOURSYNTH=OFF
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include"
         -D CMAKE_CXX_FLAGS="/fp:fast"
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
@@ -74,7 +74,7 @@ jobs:
         -D USE_NVRTC_STATIC=ON
         -D ENABLE_AVISYNTHPLUS=ON
         -D AVISYNTHPLUS_INCLUDE_DIRECTORY="%cd%\avisynth+\avs_core\include"
-        -D ENABLE_VAPOURSYNTH=ON
+        -D ENABLE_VAPOURSYNTH=OFF
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include"
         -D CMAKE_CXX_FLAGS="/fp:fast"
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
