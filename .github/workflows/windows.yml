@@ -21,8 +21,8 @@ jobs:
 
     - name: Setup CUDA
       run: |
-        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.6.0/network_installers/cuda_11.6.0_windows_network.exe
-        cuda_installer.exe -s nvcc_11.6 cudart_11.6 nvrtc_dev_11.6 visual_studio_integration_11.6
+        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.7.0/network_installers/cuda_11.7.0_windows_network.exe
+        cuda_installer.exe -s nvcc_11.7 cudart_11.7 nvrtc_dev_11.7
 
     - name: Setup Ninja
       run: pip install ninja
@@ -51,14 +51,14 @@ jobs:
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
         -D CMAKE_CUDA_ARCHITECTURES="35-real;50;61-real;75-real;86"
       env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
-        CUDA_PATH_V11_6: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
+        CUDA_PATH_V11_7: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
 
     - name: Build
       run: cmake --build build --parallel %NUMBER_OF_PROCESSORS% --verbose
       env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
-        CUDA_PATH_V11_6: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
+        CUDA_PATH_V11_7: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
 
     - name: Install
       run: cmake --install build --prefix artifact
@@ -80,14 +80,14 @@ jobs:
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
         -D CMAKE_CUDA_ARCHITECTURES="35-real;50;61-real;75-real;86"
       env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
-        CUDA_PATH_V11_6: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
+        CUDA_PATH_V11_7: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
 
     - name: Build (x86)
       run: cmake --build build_x86 --config Release --parallel %NUMBER_OF_PROCESSORS% --verbose
       env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
-        CUDA_PATH_V11_6: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.6
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
+        CUDA_PATH_V11_7: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
 
     - name: Install (x86)
       run: cmake --install build_x86 --prefix artifact_x86
