@@ -97,7 +97,7 @@ PVideoFrame __stdcall VAggregateFilter::GetFrame(int n, IScriptEnvironment* env)
 
             const float * agg_src {
                 reinterpret_cast<const float *>(srcs[i]->GetReadPtr(planes_id[plane])) + 
-                (temporal_width - 1 - i) * 2 * height * stride
+                std::clamp(temporal_width - 1 - i, n - vi.num_frames + 1 + radius, n + radius) * 2 * height * stride
             };
             float * agg_dst = buffer.data();
 
