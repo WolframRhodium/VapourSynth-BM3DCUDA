@@ -766,7 +766,7 @@ void bm3d(
                 float neighbor_patch[8];
 
                 // promote coherent execution
-                #if __CUDA_ARCH__ >= 700 && __CUDACC_VER_MAJOR__ >= 11 && __CUDACC_VER_MINOR__ >= 5
+                #if __CUDA_ARCH__ >= 700
                 __syncwarp(membermask);
                 #endif
 
@@ -851,7 +851,7 @@ void bm3d(
                             float neighbor_patch[8];
 
                             // promote coherent execution
-                            #if __CUDA_ARCH__ >= 700 && __CUDACC_VER_MAJOR__ >= 11 && __CUDACC_VER_MINOR__ >= 5
+                            #if __CUDA_ARCH__ >= 700
                             __syncwarp(membermask);
                             #endif
 
