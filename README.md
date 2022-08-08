@@ -46,6 +46,10 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
 
     vbasic = core.{bm3d...}.BM3D(src, radius=radius_nonzero).bm3d.VAggregate(radius=radius_nonzero)
     vfinal = core.{bm3d...}.BM3D(src, ref=vbasic, radius=r).bm3d.VAggregate(radius=r)
+    
+    # alternatively, using the v2 interface
+    basic_or_vbasic = core.{bm3dcpu, bm3dcuda, bm3dcuda_rtc}.BM3Dv2(clip, radius=r)
+    final_or_vfinal = core.{bm3d...}.BM3Dv2(src, ref=basic_or_vbasic, radius=r)
     ```
 
     corresponds to the followings (ignoring color space handling and other differences in implementation), respectively
