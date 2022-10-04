@@ -688,6 +688,8 @@ extern "C"
 __global__
 #if __CUDA_ARCH__ == 750 || __CUDA_ARCH__ == 860
 __launch_bounds__(32, 16)
+#elif __CUDA_ARCH__ == 890
+__launch_bounds__(32, 24)
 #else
 __launch_bounds__(32, 32)
 #endif
