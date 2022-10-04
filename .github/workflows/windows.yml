@@ -38,13 +38,13 @@ jobs:
       uses: actions/cache@v2
       with:
         path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
-        key: ${{ runner.os }}-cuda-11.7.0
+        key: ${{ runner.os }}-cuda-11.8.0
 
     - name: Setup CUDA
       if: steps.cache-cuda.outputs.cache-hit != 'true'
       run: |
-        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.7.0/network_installers/cuda_11.7.0_windows_network.exe
-        cuda_installer.exe -s nvcc_11.7 cudart_11.7 nvrtc_dev_11.7
+        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.8.0/network_installers/cuda_11.8.0_windows_network.exe
+        cuda_installer.exe -s nvcc_11.8 cudart_11.8 nvrtc_dev_11.8
 
     - name: Download VapourSynth headers
       run: |
@@ -62,11 +62,11 @@ jobs:
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="$(pwd)\vapoursynth\include"
         -D CMAKE_CXX_FLAGS="/fp:fast /arch:AVX /EHsc"
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
-        -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86-real"
+        -D CMAKE_CUDA_ARCHITECTURES="50;61-real;70-virtual;75-real;86-real;89-real"
         -D CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
       env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
-        CUDA_PATH_V11_7: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8
+        CUDA_PATH_V11_8: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8
 
     - name: Build (CUDA)
       run: cmake --build build --verbose
@@ -77,7 +77,7 @@ jobs:
     - name: Setup LLVM
       shell: bash
       run: |
-        curl -s -o llvm-win64.exe -LJO https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.5/LLVM-14.0.5-win64.exe
+        curl -s -o llvm-win64.exe -LJO https://github.com/llvm/llvm-project/releases/download/llvmorg-15.0.0/LLVM-15.0.0-win64.exe
         7z x -ollvm llvm-win64.exe
 
     - name: Configure, build, install (CPU)
