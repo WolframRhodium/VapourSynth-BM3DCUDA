@@ -11,26 +11,22 @@ on:
 
 jobs:
   build-linux:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
     - name: Checkout repo
       uses: actions/checkout@v2
       with:
         fetch-depth: 1
 
-    - name: Setup GCC and Ninja
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y g++-11 ninja-build
-        echo "CC=gcc-11" >> $GITHUB_ENV
-        echo "CXX=g++-11" >> $GITHUB_ENV
+    - name: Setup Ninja
+      run: pip install ninja
 
     - name: Setup CUDA
       run: |
         wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.0-1_all.deb
         sudo dpkg -i cuda-keyring_1.0-1_all.deb
         sudo apt-get update
-        sudo apt-get install -y cuda-nvcc-11-8 cuda-cudart-dev-11-8 cuda-nvrtc-dev-11-8
+        sudo apt-get install -y cuda-nvcc-12-0 cuda-cudart-dev-12-0 cuda-nvrtc-dev-12-0
         echo "PATH=/usr/local/cuda/bin${PATH:+:${PATH}}" >> $GITHUB_ENV
         echo "CUDA_PATH=/usr/local/cuda" >> $GITHUB_ENV
         echo "LD_LIBRARY_PATH=/usr/local/cuda/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" >> $GITHUB_ENV
