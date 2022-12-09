@@ -404,7 +404,11 @@ static std::variant<CUgraphExec, std::string> get_graphexec(
     }
 
     CUgraphExec graphexec;
+#if CUDA_VERSION >= 12000
+    checkError(cuGraphInstantiate(&graphexec, graph, 0));
+#else // CUDA_VERSION >= 12000
     checkError(cuGraphInstantiate(&graphexec, graph, nullptr, nullptr, 0));
+#endif // CUDA_VERSION >= 12000
 
     return graphexec;
 }
