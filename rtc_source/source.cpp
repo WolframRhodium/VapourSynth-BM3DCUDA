@@ -1291,6 +1291,11 @@ static void VS_CC BM3Dv2Create(
             process[i] = false;
         }
     }
+    if (num_sigma_args > 0) { // num_sigma_args may be -1
+        for (int i = num_sigma_args; i < 3; ++i) {
+            process[i] = process[i - 1];
+        }
+    }
 
     bool skip = true;
     auto src = vsapi->propGetNode(in, "clip", 0, nullptr);
