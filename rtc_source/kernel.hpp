@@ -516,6 +516,8 @@ static inline void transpose_pack8_interleave4(
 
     #pragma unroll
     for (int iter = 0; iter < howmany; ++iter, data += howmany_stride) {
+        __syncwarp();
+
         #pragma unroll
         for (int i = 0; i < 8; ++i) {
             buffer[i * smem_stride + lane_id] = data[i * stride];
