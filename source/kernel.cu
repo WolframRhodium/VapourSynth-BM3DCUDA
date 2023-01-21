@@ -184,7 +184,7 @@ static inline void transpose_pack8_interleave4(
 ) {
 
     int lane_id;
-    asm("mov.u32 %0, %%laneid;" : "=r"(lane_id));
+    asm volatile("mov.u32 %0, %%laneid;" : "=r"(lane_id));
 
     #pragma unroll
     for (int iter = 0; iter < howmany; ++iter, data += howmany_stride) {
@@ -209,7 +209,7 @@ template <int stride=32>
 __device__
 static inline float hard_thresholding(float * data, float sigma) {
     int lane_id;
-    asm("mov.u32 %0, %%laneid;" : "=r"(lane_id));
+    asm volatile("mov.u32 %0, %%laneid;" : "=r"(lane_id));
 
     // number of non-zero coefficients
     #if __CUDA_ARCH__ == 750 || __CUDA_ARCH__ == 860
@@ -287,7 +287,7 @@ static inline float wiener_filtering(
     float * __restrict__ data, float * __restrict__ ref, float sigma
 ) {
     int lane_id;
-    asm("mov.u32 %0, %%laneid;" : "=r"(lane_id));
+    asm volatile("mov.u32 %0, %%laneid;" : "=r"(lane_id));
 
     // squared l2-norm of coefficients
     #if __CUDA_ARCH__ == 750 || __CUDA_ARCH__ == 860
@@ -387,7 +387,7 @@ static void bm3d(
     __shared__ float buffer[8 * smem_stride];
 
     int lane_id;
-    asm("mov.u32 %0, %%laneid;" : "=r"(lane_id));
+    asm volatile("mov.u32 %0, %%laneid;" : "=r"(lane_id));
 
     const int sub_lane_id = lane_id % 8; // 0 ~ 7
     int x = (4 * blockIdx.x + lane_id / 8) * block_step;
