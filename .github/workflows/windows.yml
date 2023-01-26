@@ -12,7 +12,7 @@ jobs:
 
     steps:
     - name: Checkout repo
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
       with:
         fetch-depth: 0
 
@@ -21,8 +21,8 @@ jobs:
 
     - name: Setup CUDA
       run: |
-        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/11.7.0/network_installers/cuda_11.7.0_windows_network.exe
-        cuda_installer.exe -s nvcc_11.7 cudart_11.7 nvrtc_dev_11.7 visual_studio_integration_11.7
+        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/12.0.0/network_installers/cuda_12.0.0_windows_network.exe
+        cuda_installer.exe -s nvcc_12.0 cudart_12.0 nvrtc_dev_12.0
 
     - name: Setup Ninja
       run: pip install ninja
@@ -49,51 +49,23 @@ jobs:
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include"
         -D CMAKE_CXX_FLAGS="/fp:fast"
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
-        -D CMAKE_CUDA_ARCHITECTURES="35-real;50;61-real;75-real;86"
+        -D CMAKE_CUDA_ARCHITECTURES="50;61-real;75-real;86-real;89-real"
       env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
-        CUDA_PATH_V11_7: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.0
+        CUDA_PATH_V12_0: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.0
 
     - name: Build
-      run: cmake --build build --parallel %NUMBER_OF_PROCESSORS% --verbose
+      run: cmake --build build --verbose
       env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
-        CUDA_PATH_V11_7: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.0
+        CUDA_PATH_V12_0: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.0
 
     - name: Install
       run: cmake --install build --prefix artifact
 
     - name: Upload
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: BM3DCUDA-Windows-x64
         path: artifact
 
-    - name: Configure (x86)
-      run: cmake -S . -B build_x86 -A Win32 
-        -D USE_NVRTC_STATIC=ON
-        -D ENABLE_AVISYNTHPLUS=ON
-        -D AVISYNTHPLUS_INCLUDE_DIRECTORY="%cd%\avisynth+\avs_core\include"
-        -D ENABLE_VAPOURSYNTH=OFF
-        -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include"
-        -D CMAKE_CXX_FLAGS="/fp:fast"
-        -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
-        -D CMAKE_CUDA_ARCHITECTURES="35-real;50;61-real;75-real;86"
-      env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
-        CUDA_PATH_V11_7: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
-
-    - name: Build (x86)
-      run: cmake --build build_x86 --config Release --parallel %NUMBER_OF_PROCESSORS% --verbose
-      env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
-        CUDA_PATH_V11_7: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.7
-
-    - name: Install (x86)
-      run: cmake --install build_x86 --prefix artifact_x86
-
-    - name: Upload (x86)
-      uses: actions/upload-artifact@v2
-      with:
-        name: BM3DCUDA-Windows-x86
-        path: artifact_x86
