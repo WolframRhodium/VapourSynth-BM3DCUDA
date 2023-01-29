@@ -50,6 +50,7 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
 #include <stdexcept>
 #include <string>
@@ -71,6 +72,7 @@ static VSPlugin * myself = nullptr;
 struct BM3DData {
     VSNodeRef * node;
     VSNodeRef * ref_node;
+    VSNodeRef * sigma_node;
     const VSVideoInfo * vi;
 
     std::array<float, 3> sigma;
@@ -778,7 +780,8 @@ static inline void bm3d(
     int width, int height,
     const std::array<float, num_planes(chroma)> &sigma,
     int block_step, int bm_range, int radius, int ps_num, int ps_range,
-    std::conditional_t<temporal, std::nullptr_t, float * VS_RESTRICT> buffer
+    std::conditional_t<temporal, std::nullptr_t, float * VS_RESTRICT> buffer,
+    std::optional<const float * VS_RESTRICT *> sigmaps
 ) noexcept {
 
     const int temporal_width = 2 * radius + 1;
@@ -844,7 +847,13 @@ static inline void bm3d(
             }
 
             for (int plane = 0; plane < num_planes(chroma); ++plane) {
-                if (chroma && sigma[plane] < std::numeric_limits<float>::epsilon()) {
+                float local_sigma;
+                if (sigmaps.has_value()) {
+                    local_sigma = sigmaps.value()[plane][(y + 3) * stride + (x + 3)]; // TODO
+                } else {
+                    local_sigma = sigma[plane];
+                }
+                if (chroma && local_sigma < std::numeric_limits<float>::epsilon()) {
                     continue;
                 }
 
@@ -870,10 +879,10 @@ static inline void bm3d(
                             basic_estimate_group, refps[plane], stride, index_x, index_y);
                     }
                     adaptive_weight = collaborative_wiener(
-                        denoising_group, basic_estimate_group, sigma[plane]);
+                        denoising_group, basic_estimate_group, local_sigma);
                 } else { // basic estimation
                     adaptive_weight = collaborative_hard(
-                        denoising_group, sigma[plane]);
+                        denoising_group, local_sigma);
                 }
 
                 if constexpr (temporal) {
@@ -945,6 +954,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 vsapi->requestFrameFilter(i, d->ref_node, frameCtx);
             }
         }
+        if (d->sigma_node != nullptr) {
+            vsapi->requestFrameFilter(n, d->sigma_node, frameCtx);
+        }
     } else if (activationReason == arAllFramesReady) {
         const int radius = d->radius;
         const int center = radius;
@@ -969,6 +981,11 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             }
             return temp;
         }();
+        const VSFrameRef * sigma_frame {};
+        if (d->sigma_node) {
+            sigma_frame = vsapi->getFrameFilter(n, d->sigma_node, frameCtx);
+        }
+
         const VSFrameRef * const src_frame = src_frames[center];
         VSFrameRef * const dst_frame = [&](){
             if (radius == 0) {
@@ -1035,6 +1052,18 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             const int ps_num = d->ps_num[0];
             const int ps_range = d->ps_range[0];
 
+            std::unique_ptr<float []> sigma_input[3];
+            if (d->sigma_node) {
+                for (int plane = 0; plane < 3; plane++) {
+                    sigma_input[plane] = std::make_unique<float []>(height * stride);
+                    auto sigma_ptr = (const float *) vsapi->getReadPtr(sigma_frame, plane);
+                    for (int i = 0; i < height * stride; i++) {
+                        sigma_input[plane][i] = sigma_ptr[i] * (3.f / 4.f) / 255.f * 64.f * (d->ref_node == nullptr ? 2.7f : 1.0f);
+                    }
+                }
+            }
+            const float * sigma_input_ptrs[] { sigma_input[0].get(), sigma_input[1].get(), sigma_input[2].get() };
+
             float * buffer {};
             if (radius == 0) {
                 const auto thread_id = std::this_thread::get_id();
@@ -1077,7 +1106,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         width, height,
                         sigma, block_step, bm_range,
                         radius, ps_num, ps_range,
-                        buffer);
+                        buffer,
+                        d->sigma_node ? std::optional<const float * VS_RESTRICT *>{ &sigma_input_ptrs[0] } : std::optional<const float * VS_RESTRICT *>{}
+                    );
                 } else {
                     constexpr bool temporal = true;
                     bm3d<temporal, chroma, final_>(
@@ -1085,7 +1116,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         width, height,
                         sigma, block_step, bm_range,
                         radius, ps_num, ps_range,
-                        nullptr);
+                        nullptr,
+                        d->sigma_node ? std::optional<const float * VS_RESTRICT *>{ &sigma_input_ptrs[0] } : std::optional<const float * VS_RESTRICT *>{}
+                    );
                 }
 
             } else {
@@ -1107,7 +1140,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         width, height,
                         sigma, block_step, bm_range,
                         radius, ps_num, ps_range,
-                        buffer);
+                        buffer,
+                        d->sigma_node ? std::optional<const float * VS_RESTRICT *>{ &sigma_input_ptrs[0] } : std::optional<const float * VS_RESTRICT *>{}
+                    );
                 } else {
                     constexpr bool temporal = true;
                     bm3d<temporal, chroma, final_>(
@@ -1115,7 +1150,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         width, height,
                         sigma, block_step, bm_range,
                         radius, ps_num, ps_range,
-                        nullptr);
+                        nullptr,
+                        d->sigma_node ? std::optional<const float * VS_RESTRICT *>{ &sigma_input_ptrs[0] } : std::optional<const float * VS_RESTRICT *>{}
+                    );
                 }
             }
         } else {
@@ -1141,6 +1178,16 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                     const int bm_range = d->bm_range[plane];
                     const int ps_num = d->ps_num[plane];
                     const int ps_range = d->ps_range[plane];
+
+                    std::unique_ptr<float []> sigma_input;
+                    if (d->sigma_node) {
+                        sigma_input = std::make_unique<float []>(height * stride);
+                        auto sigma_ptr = (const float *) vsapi->getReadPtr(sigma_frame, plane);
+                        for (int i = 0; i < height * stride; i++) {
+                            sigma_input[i] = sigma_ptr[i] * (3.f / 4.f) / 255.f * 64.f * (d->ref_node == nullptr ? 2.7f : 1.0f);
+                        }
+                    }
+                    const float * sigma_input_ptrs[] { sigma_input.get() };
 
                     float * buffer {};
                     if (radius == 0) {
@@ -1184,7 +1231,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                                 width, height,
                                 sigma, block_step, bm_range,
                                 radius, ps_num, ps_range,
-                                buffer);
+                                buffer,
+                                d->sigma_node ? std::optional<const float * VS_RESTRICT *>{ &sigma_input_ptrs[0] } : std::optional<const float * VS_RESTRICT *>{}
+                            );
                         } else {
                             constexpr bool temporal = true;
                             bm3d<temporal, chroma, final_>(
@@ -1192,7 +1241,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                                 width, height,
                                 sigma, block_step, bm_range,
                                 radius, ps_num, ps_range,
-                                nullptr);
+                                nullptr,
+                                d->sigma_node ? std::optional<const float * VS_RESTRICT *>{ &sigma_input_ptrs[0] } : std::optional<const float * VS_RESTRICT *>{}
+                            );
                         }
                     } else {
                         constexpr bool final_ = true;
@@ -1211,7 +1262,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                                 width, height,
                                 sigma, block_step, bm_range,
                                 radius, ps_num, ps_range,
-                                buffer);
+                                buffer,
+                                d->sigma_node ? std::optional<const float * VS_RESTRICT *>{ &sigma_input_ptrs[0] } : std::optional<const float * VS_RESTRICT *>{}
+                            );
                         } else {
                             constexpr bool temporal = true;
                             bm3d<temporal, chroma, final_>(
@@ -1219,7 +1272,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                                 width, height,
                                 sigma, block_step, bm_range,
                                 radius, ps_num, ps_range,
-                                nullptr);
+                                nullptr,
+                                d->sigma_node ? std::optional<const float * VS_RESTRICT *>{ &sigma_input_ptrs[0] } : std::optional<const float * VS_RESTRICT *>{}
+                            );
                         }
                     }
                 }
@@ -1233,6 +1288,8 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
         for (const auto & frame : ref_frames) {
             vsapi->freeFrame(frame);
         }
+
+        vsapi->freeFrame(sigma_frame);
 
         if (radius != 0) {
             VSMap * dst_prop { vsapi->getFramePropsRW(dst_frame) };
@@ -1261,6 +1318,7 @@ static void VS_CC BM3DFree(
 
     vsapi->freeNode(d->node);
     vsapi->freeNode(d->ref_node);
+    vsapi->freeNode(d->sigma_node);
 
     delete d;
 }
@@ -1285,6 +1343,7 @@ static void VS_CC BM3DCreate(
         vsapi->setError(out, ("BM3D: " + error_message).c_str());
         vsapi->freeNode(d->node);
         vsapi->freeNode(d->ref_node);
+        vsapi->freeNode(d->sigma_node);
     };
 
     if (!isConstantFormat(d->vi) || d->vi->format->sampleType == stInteger ||
@@ -1306,6 +1365,11 @@ static void VS_CC BM3DCreate(
         } else if (ref_vi->numFrames != d->vi->numFrames) {
             return set_error("\"ref\" must be of the same number of frames as \"clip\"");
         }
+    }
+
+    d->sigma_node = vsapi->propGetNode(in, "sigma_clip", 0, &error);
+    if (error) {
+        d->sigma_node = nullptr;
     }
 
     for (unsigned i = 0; i < std::size(d->sigma); ++i) {
@@ -1702,6 +1766,7 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
         "ps_range:int:opt;"
         "chroma:int:opt;"
         "zero_init:int:opt;"
+        "sigma_clip:clip:opt;"
     };
 
     registerFunc("BM3D", bm3d_args, BM3DCreate, nullptr, plugin);
