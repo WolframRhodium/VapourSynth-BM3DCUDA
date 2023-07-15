@@ -1040,16 +1040,16 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 const auto thread_id = std::this_thread::get_id();
                 bool init = true;
 
-                d->buffer_lock.lock_shared();
+                {
+                    std::shared_lock _ { d->buffer_lock };
 
-                try {
-                    const auto & const_buffer = d->buffer;
-                    buffer = const_buffer.at(thread_id);
-                } catch (const std::out_of_range &) {
-                    init = false;
+                    try {
+                        const auto & const_buffer = d->buffer;
+                        buffer = const_buffer.at(thread_id);
+                    } catch (const std::out_of_range &) {
+                        init = false;
+                    }
                 }
-
-                d->buffer_lock.unlock_shared();
 
                 if (!init) {
                     buffer = vs_aligned_malloc<float>(
@@ -1147,16 +1147,16 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         const auto thread_id = std::this_thread::get_id();
                         bool init = true;
 
-                        d->buffer_lock.lock_shared();
+                        {
+                            std::shared_lock _ { d->buffer_lock };
 
-                        try {
-                            const auto & const_buffer = d->buffer;
-                            buffer = const_buffer.at(thread_id);
-                        } catch (const std::out_of_range &) {
-                            init = false;
+                            try {
+                                const auto & const_buffer = d->buffer;
+                                buffer = const_buffer.at(thread_id);
+                            } catch (const std::out_of_range &) {
+                                init = false;
+                            }
                         }
-
-                        d->buffer_lock.unlock_shared();
 
                         if (!init) {
                             buffer = vs_aligned_malloc<float>(
@@ -1466,16 +1466,16 @@ static const VSFrameRef *VS_CC VAggregateGetFrame(
             const auto thread_id = std::this_thread::get_id();
             bool init = true;
 
-            d->buffer_lock.lock_shared();
+            {
+                std::shared_lock _ { d->buffer_lock };
 
-            try {
-                const auto & const_buffer = d->buffer;
-                buffer = const_buffer.at(thread_id);
-            } catch (const std::out_of_range &) {
-                init = false;
+                try {
+                    const auto & const_buffer = d->buffer;
+                    buffer = const_buffer.at(thread_id);
+                } catch (const std::out_of_range &) {
+                    init = false;
+                }
             }
-
-            d->buffer_lock.unlock_shared();
 
             if (!init) {
                 assert(d->process[0] || d->src_vi->format->numPlanes > 1);
