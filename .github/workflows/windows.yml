@@ -92,12 +92,12 @@ jobs:
     - name: Setup LLVM
       shell: bash
       run: |
-        curl -s -o llvm-win64.exe -LJO https://github.com/llvm/llvm-project/releases/download/llvmorg-15.0.6/LLVM-15.0.6-win64.exe
+        curl -s -o llvm-win64.exe -LJO https://github.com/llvm/llvm-project/releases/download/llvmorg-16.0.6/LLVM-16.0.6-win64.exe
         7z x -ollvm llvm-win64.exe
 
     - name: Configure, build, install (CPU)
       shell: bash
-      run: for arch in haswell skylake icelake-client alderlake znver1 znver2 znver3; do
+      run: for arch in haswell skylake icelake-client alderlake znver1 znver2 znver3 znver4; do
           cmake -S . -B build_cpu -G Ninja -LA
             -D CMAKE_BUILD_TYPE=Release
             -D ENABLE_CUDA=OFF
