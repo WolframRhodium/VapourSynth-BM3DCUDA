@@ -6,6 +6,7 @@ on:
       - 'source/*'
       - 'cpu_source/*'
       - 'rtc_source/*'
+      - 'hip_source/*'
       - '.github/workflows/windows.yml'
   workflow_dispatch:
     inputs:
@@ -23,7 +24,7 @@ jobs:
 
     steps:
     - name: Checkout repo
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
       with:
         fetch-depth: 1
 
@@ -35,7 +36,7 @@ jobs:
 
     - name: Cache CUDA
       id: cache-cuda
-      uses: actions/cache@v2
+      uses: actions/cache@v3
       with:
         path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
         key: ${{ runner.os }}-cuda-12.0.0
@@ -45,6 +46,20 @@ jobs:
       run: |
         curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/12.0.0/network_installers/cuda_12.0.0_windows_network.exe
         cuda_installer.exe -s nvcc_12.0 cudart_12.0 nvrtc_dev_12.0
+
+    - name: Cache HIP
+      id: cache-hip
+      uses: actions/cache@v3
+      with:
+        path: C:\Program Files\AMD\ROCM
+        key: ${{ runner.os }}-rocm-5.5.1
+
+    - name: Setup HIP
+      if: steps.cache-hip.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        curl -s -o hip_installer.exe -L https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-23.Q3-WinSvr2022-For-HIP.exe
+        Start-Process hip_installer.exe -ArgumentList '-install' -NoNewWindow -Wait
 
     - name: Download VapourSynth headers
       run: |
@@ -96,13 +111,31 @@ jobs:
           && mv temp/bin/bm3dcpu.dll install/bin/bm3dcpu-${arch}.dll -v;
         done
 
+    - name: Configure (HIP)
+      shell: bash
+      run: cmake -S . -B build_hip -G Ninja -LA
+        -D CMAKE_BUILD_TYPE=Release
+        -D ENABLE_CUDA=OFF
+        -D ENABLE_CPU=OFF
+        -D ENABLE_HIP=ON
+        -D VAPOURSYNTH_INCLUDE_DIRECTORY="$(pwd)\vapoursynth\include"
+        -D CMAKE_CXX_COMPILER="C:/Program Files/AMD/ROCm/5.5/bin/clang++.exe"
+        -D HIP_DIR="C:/Program Files/AMD/ROCm/5.5/lib/cmake/hip"
+        -D CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+
+    - name: Build (HIP)
+      run: cmake --build build_hip --verbose
+
+    - name: Install (HIP)
+      run: cmake --install build_hip --prefix install
+
     - name: Prepare for upload
       run: |
         mkdir artifact
         copy install\bin\*.dll artifact
 
     - name: Upload
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: VapourSynth-BM3DCUDA-Windows
         path: artifact
@@ -124,6 +157,10 @@ jobs:
         xcopy bm3dcpu-*.dll VapourSynth-BM3DCPU-${{ github.event.inputs.tag }} /f
         7z a -t7z -mx=9 ../VapourSynth-BM3DCPU-${{ github.event.inputs.tag }}.7z VapourSynth-BM3DCPU-${{ github.event.inputs.tag }}
 
+        mkdir VapourSynth-BM3DHIP-${{ github.event.inputs.tag }}
+        xcopy bm3dhip.dll VapourSynth-BM3DHIP-${{ github.event.inputs.tag }} /f
+        7z a -t7z -mx=9 ../VapourSynth-BM3DHIP-${{ github.event.inputs.tag }}.7z VapourSynth-BM3DHIP-${{ github.event.inputs.tag }}
+
     - name: Release
       uses: softprops/action-gh-release@v1
       if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
@@ -133,6 +170,7 @@ jobs:
           VapourSynth-BM3DCUDA-${{ github.event.inputs.tag }}.7z
           VapourSynth-BM3DCUDA_RTC-${{ github.event.inputs.tag }}.7z
           VapourSynth-BM3DCPU-${{ github.event.inputs.tag }}.7z
+          VapourSynth-BM3DHIP-${{ github.event.inputs.tag }}.7z
         fail_on_unmatched_files: true
         generate_release_notes: false
         prerelease: true
