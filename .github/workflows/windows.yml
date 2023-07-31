@@ -34,6 +34,12 @@ jobs:
     - name: Setup Ninja
       run: pip install ninja
 
+    - name: Download VapourSynth headers
+      run: |
+        curl -s -o vs.zip -L https://github.com/vapoursynth/vapoursynth/archive/refs/tags/R57.zip
+        unzip -q vs.zip
+        mv vapoursynth-*/ vapoursynth/
+
     - name: Cache CUDA
       id: cache-cuda
       uses: actions/cache@v3
@@ -46,26 +52,6 @@ jobs:
       run: |
         curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/12.0.0/network_installers/cuda_12.0.0_windows_network.exe
         cuda_installer.exe -s nvcc_12.0 cudart_12.0 nvrtc_dev_12.0
-
-    - name: Cache HIP
-      id: cache-hip
-      uses: actions/cache@v3
-      with:
-        path: C:\Program Files\AMD\ROCM
-        key: ${{ runner.os }}-rocm-5.5.1
-
-    - name: Setup HIP
-      if: steps.cache-hip.outputs.cache-hit != 'true'
-      shell: pwsh
-      run: |
-        curl -s -o hip_installer.exe -L https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-23.Q3-WinSvr2022-For-HIP.exe
-        Start-Process hip_installer.exe -ArgumentList '-install' -NoNewWindow -Wait
-
-    - name: Download VapourSynth headers
-      run: |
-        curl -s -o vs.zip -L https://github.com/vapoursynth/vapoursynth/archive/refs/tags/R57.zip
-        unzip -q vs.zip
-        mv vapoursynth-*/ vapoursynth/
 
     - name: Configure (CUDA)
       shell: bash
@@ -110,6 +96,20 @@ jobs:
           && cmake --install build_cpu --prefix temp
           && mv temp/bin/bm3dcpu.dll install/bin/bm3dcpu-${arch}.dll -v;
         done
+
+    - name: Cache HIP
+      id: cache-hip
+      uses: actions/cache@v3
+      with:
+        path: C:\Program Files\AMD\ROCM
+        key: ${{ runner.os }}-rocm-5.5.1
+
+    - name: Setup HIP
+      if: steps.cache-hip.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        curl -s -o hip_installer.exe -L https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-23.Q3-WinSvr2022-For-HIP.exe
+        Start-Process hip_installer.exe -ArgumentList '-install' -NoNewWindow -Wait
 
     - name: Configure (HIP)
       shell: bash
