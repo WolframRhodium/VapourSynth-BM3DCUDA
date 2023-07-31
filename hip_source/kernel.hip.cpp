@@ -28,10 +28,7 @@
 #include <cstdio>
 #include <type_traits>
 
-#ifndef __HIP_PLATFORM_HCC__
-#define __HIP_PLATFORM_HCC__
 #include <hip/hip_runtime.h>
-#endif
 
 #define FMA(a, b, c) (((a) * (b)) + (c))
 #define FMS(a, b, c) (((a) * (b)) - (c))
