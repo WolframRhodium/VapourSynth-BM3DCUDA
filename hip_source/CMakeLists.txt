@@ -1,10 +1,8 @@
-cmake_minimum_required(VERSION 3.21)
-
-cmake_policy(VERSION 3.21.3)
+cmake_minimum_required(VERSION 3.16)
 
 project(BM3DHIP VERSION 2.6 LANGUAGES CXX)
 
-find_package(HIP REQUIRED)
+find_package(HIP REQUIRED CONFIG)
 
 add_library(bm3dhip_source OBJECT source.cpp)
 target_include_directories(bm3dhip_source PRIVATE 
