@@ -675,7 +675,8 @@ static void VS_CC BM3DCreate(
 
             Resource<float *, hipHostFree> h_res {};
             checkError(hipHostMalloc((void **) &h_res.data,
-                num_planes * temporal_width * 2 * max_height * d_pitch));
+                num_planes * temporal_width * 2 * max_height * d_pitch,
+                hipHostMallocNonCoherent));
 
             Resource<hipStream_t, hipStreamDestroy> stream {};
             checkError(hipStreamCreateWithFlags(&stream.data,
