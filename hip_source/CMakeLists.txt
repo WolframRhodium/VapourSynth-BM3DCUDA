@@ -23,7 +23,7 @@ set_target_properties(bm3dhip_kernel PROPERTIES
     CXX_STANDARD_REQUIRED ON)
 target_compile_options(bm3dhip_kernel PRIVATE
     # https://www.llvm.org/docs/AMDGPUUsage.html
-    -mno-wavefrontsize64 -mcumode -ffast-math -munsafe-fp-atomics)
+    -mno-wavefrontsize64 -mcumode)
 target_link_libraries(bm3dhip_kernel hip::device)
 
 add_library(bm3dhip SHARED)
