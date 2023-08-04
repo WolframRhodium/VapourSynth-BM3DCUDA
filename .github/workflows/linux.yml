@@ -14,12 +14,18 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
     - name: Checkout repo
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
       with:
         fetch-depth: 1
 
     - name: Setup Ninja
       run: pip install ninja
+
+    - name: Download VapourSynth headers
+      run: |
+        wget -q -O vs.zip https://github.com/vapoursynth/vapoursynth/archive/refs/tags/R57.zip
+        unzip -q vs.zip
+        mv vapoursynth*/ vapoursynth
 
     - name: Setup CUDA
       run: |
@@ -31,13 +37,7 @@ jobs:
         echo "CUDA_PATH=/usr/local/cuda" >> $GITHUB_ENV
         echo "LD_LIBRARY_PATH=/usr/local/cuda/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" >> $GITHUB_ENV
 
-    - name: Download VapourSynth headers
-      run: |
-        wget -q -O vs.zip https://github.com/vapoursynth/vapoursynth/archive/refs/tags/R57.zip
-        unzip -q vs.zip
-        mv vapoursynth*/ vapoursynth
-
-    - name: Configure
+    - name: Configure (CUDA, CPU)
       run: cmake -S . -B build -G Ninja
         -D USE_NVRTC_STATIC=ON
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="`pwd`/vapoursynth/include"
@@ -48,13 +48,39 @@ jobs:
         -D CMAKE_CUDA_ARCHITECTURES="50;61-real;70-virtual;75-real;86-real;89-real"
 
     - name: Build
-      run: cmake --build build --config Release --verbose
+      run: cmake --build build --verbose
 
     - name: Install
       run: cmake --install build --prefix artifact
 
+    - name: Setup HIP
+      run: |
+        wget https://repo.radeon.com/rocm/rocm.gpg.key -O - | gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg > /dev/null
+        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/5.6 jammy main" | sudo tee --append /etc/apt/sources.list.d/rocm.list
+        echo -e 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600' | sudo tee /etc/apt/preferences.d/rocm-pin-600
+        sudo apt update
+        sudo apt install hip-runtime-amd rocm-device-libs
+
+    - name: Configure (HIP)
+      run: cmake -S . -B build_hip -G Ninja -D CMAKE_BUILD_TYPE=Release
+        -D ENABLE_CPU=OFF -D ENABLE_CUDA=OFF -D ENABLE_HIP=ON
+        -D CMAKE_CXX_COMPILER=/opt/rocm/bin/amdclang++
+        -D CMAKE_CXX_FLAGS="-Wall -ffast-math -munsafe-fp-atomics -Rpass-analysis=kernel-resource-usage"
+        -D VAPOURSYNTH_INCLUDE_DIRECTORY="`pwd`/vapoursynth/include"
+        -D HIP_DIR=/opt/rocm/lib/cmake/hip
+        -D AMDDeviceLibs_DIR=/opt/rocm/lib/cmake/AMDDeviceLibs
+        -D amd_comgr_DIR=/opt/rocm/lib/cmake/amd_comgr
+        -D hsa-runtime64_DIR=/opt/rocm/lib/cmake/hsa-runtime64
+        -D GPU_TARGETS="gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103"
+
+    - name: Build (HIP)
+      run: cmake --build build_hip --verbose
+
+    - name: Install (HIP)
+      run: cmake --install build_hip --prefix artifact
+
     - name: Upload
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: VapourSynth-BM3DCUDA-Linux
         path: artifact
