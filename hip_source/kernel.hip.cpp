@@ -27,6 +27,7 @@
 #include <cfloat>
 #include <cstdio>
 #include <type_traits>
+#include "hip/amd_detail/host_defines.h"
 
 #include <hip/hip_runtime.h>
 
@@ -371,10 +372,13 @@ static inline float collaborative_wiener(
 // BM3D kernel
 template <bool temporal=false, bool chroma=false, bool final_=false>
 __global__
-#if __CUDA_ARCH__ == 750 || __CUDA_ARCH__ == 860
-__launch_bounds__(32, 16)
-#elif __CUDA_ARCH__ == 890
-__launch_bounds__(32, 24)
+#if defined(__gfx1010__) || defined(__gfx1011__) || defined(__gfx1012__) || defined(__gfx1013__) || \
+    defined(__gfx1030__) || defined(__gfx1031__) || defined(__gfx1032__) || defined(__gfx1033__) || \
+    defined(__gfx1034__) || defined(__gfx1035__) || defined(__gfx1036__) || \
+    defined(__gfx1102__) || defined(__gfx1103__)
+__launch_bounds__(32, 8)
+#elif defined(__gfx1100__) || defined(__gfx1101__)
+__launch_bounds__(32, 10)
 #else
 __launch_bounds__(32)
 #endif
