@@ -794,6 +794,8 @@ hipGraphExec_t get_graphexec(
 
     hipGraphNode_t n_memset;
     {
+        hipGraphNode_t dependencies[] { n_HtoD };
+
         hipMemsetParams memset_params {};
         memset_params.dst = d_res;
         memset_params.pitch = pitch;
@@ -801,12 +803,16 @@ hipGraphExec_t get_graphexec(
         memset_params.elementSize = 4;
         memset_params.width = width;
         memset_params.height = num_planes * temporal_width * 2 * height;
-        showError(hipGraphAddMemsetNode(&n_memset, graph, nullptr, 0, &memset_params));
+        showError(hipGraphAddMemsetNode(
+            &n_memset, graph, 
+            dependencies, std::extent_v<decltype(dependencies)>,
+            &memset_params
+        ));
     }
 
     hipGraphNode_t n_kernel;
     {
-        hipGraphNode_t dependencies[] { n_HtoD, n_memset };
+        hipGraphNode_t dependencies[] { n_memset };
 
         void * kernelArgs[] {
             &d_res, &d_src,
