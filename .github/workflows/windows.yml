@@ -146,11 +146,19 @@ jobs:
         curl -J -o dpcpp_installer.exe https://registrationcenter-download.intel.com/akdlm/IRC_NAS/c08746d2-5669-4ef8-9fc8-1ec330b3ac3b/w_dpcpp-cpp-compiler_p_2023.2.2.49534_offline.exe
         dpcpp_installer -s -a -s --eula accept
 
-    - name: Configure (SYCL)
+    - name: Setup ocloc (Gen9-11)
+      shell: pwsh
       run: |
+        $env:PATH = "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\windows\lib\ocloc\gen9-11;$env:PATH"
+        "PATH=$env:PATH" | Out-File -Append -FilePath $env:GITHUB_ENV
+
+    - name: Configure (SYCL, Gen9-11)
+      run: |
+        ocloc compile --help
+
         call "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\env\vars.bat"
       
-        cmake -S . -B build_sycl -G Ninja -LA ^
+        cmake -S . -B build_sycl_gen9-11 -G Ninja -LA ^
           -D CMAKE_BUILD_TYPE=Release ^
           -D ENABLE_CUDA=OFF ^
           -D ENABLE_CPU=OFF ^
@@ -159,16 +167,48 @@ jobs:
           -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include" ^
           -D CMAKE_CXX_COMPILER=icx ^
           -D CMAKE_CXX_FLAGS="-ffast-math -mavx" ^
-          -D CMAKE_SHARED_LINKER_FLAGS="-fsycl -fsycl-targets=spir64_gen -Xsycl-target-backend=spir64_gen \"-device Gen8,Gen9,Gen11,Gen12LP,XE_HPG_CORE -options -ze-opt-large-register-file\""
+          -D CMAKE_SHARED_LINKER_FLAGS="-fsycl -fsycl-targets=spir64_gen -Xsycl-target-backend=spir64_gen \"-device Gen9,Gen11 -options -ze-opt-large-register-file\""
 
-    - name: Build (SYCL)
+    - name: Build (SYCL, Gen9-11)
       run: |
         call "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\env\vars.bat"
 
-        cmake --build build_sycl --verbose
+        cmake --build build_sycl_gen9-11 --verbose
 
-    - name: Install (SYCL)
-      run: cmake --install build_sycl --prefix install
+    - name: Install (SYCL, Gen9-11)
+      run: echo f | xcopy build_sycl_gen9-11\sycl_source\bm3dsycl.dll install\bin\bm3dsycl_gen9-11.dll /f
+
+    - name: Setup ocloc (Gen12+)
+      shell: pwsh
+      run: |
+        $env:PATH = "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\windows\lib\ocloc\gen12+;$env:PATH"
+        "PATH=$env:PATH" | Out-File -Append -FilePath $env:GITHUB_ENV
+
+    - name: Configure (SYCL, Gen12+)
+      run: |
+        ocloc compile --help
+
+        call "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\env\vars.bat"
+      
+        cmake -S . -B build_sycl_gen12+ -G Ninja -LA ^
+          -D CMAKE_BUILD_TYPE=Release ^
+          -D ENABLE_CUDA=OFF ^
+          -D ENABLE_CPU=OFF ^
+          -D ENABLE_HIP=OFF ^
+          -D ENABLE_SYCL=ON ^
+          -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include" ^
+          -D CMAKE_CXX_COMPILER=icx ^
+          -D CMAKE_CXX_FLAGS="-ffast-math -mavx" ^
+          -D CMAKE_SHARED_LINKER_FLAGS="-fsycl -fsycl-targets=spir64_gen -Xsycl-target-backend=spir64_gen \"-device Gen12LP,XE_HPG_CORE -options -ze-opt-large-register-file\""
+
+    - name: Build (SYCL, Gen12+)
+      run: |
+        call "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\env\vars.bat"
+
+        cmake --build build_sycl_gen12+ --verbose
+
+    - name: Install (SYCL, Gen12+)
+      run: echo f | xcopy build_sycl_gen12+\sycl_source\bm3dsycl.dll install\bin\bm3dsycl_gen12+.dll /f
 
     - name: Prepare for upload
       run: |
@@ -203,7 +243,7 @@ jobs:
         7z a -t7z -mx=9 ../VapourSynth-BM3DHIP-${{ github.event.inputs.tag }}.7z VapourSynth-BM3DHIP-${{ github.event.inputs.tag }}
         
         mkdir VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }}
-        xcopy bm3dsycl.dll VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }} /f
+        xcopy bm3dsycl_*.dll VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }} /f
         7z a -t7z -mx=9 ../VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }}.7z VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }}
         
         mkdir SYCL-Runtime-${{ github.event.inputs.tag }}
