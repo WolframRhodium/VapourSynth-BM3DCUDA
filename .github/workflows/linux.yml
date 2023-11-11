@@ -95,6 +95,17 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y intel-oneapi-dpcpp-cpp-2023.2.1
 
+    - name: Setup ocloc
+      run: |
+        wget -qO - https://repositories.intel.com/gpu/intel-graphics.key \
+          | sudo gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg
+
+        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy client" \
+          | sudo tee /etc/apt/sources.list.d/intel-gpu-jammy.list
+
+        sudo apt-get update
+        sudo apt-get install -y intel-opencl-icd
+
     - name: Configure (SYCL)
       run: |
         source /opt/intel/oneapi/compiler/latest/env/vars.sh
