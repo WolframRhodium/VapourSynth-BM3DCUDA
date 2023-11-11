@@ -7,6 +7,7 @@ set(USE_NVRTC_STATIC ON CACHE BOOL "Whether to use NVRTC static library")
 set(ENABLE_CPU ON CACHE BOOL "Enable CPU build")
 set(ENABLE_CUDA ON CACHE BOOL "Enable CUDA and CUDA RTC build")
 set(ENABLE_HIP OFF CACHE BOOL "Enable HIP build")
+set(ENABLE_SYCL OFF CACHE BOOL "Enable SYCL build")
 
 if (ENABLE_CUDA)
     add_subdirectory(source)
@@ -19,5 +20,9 @@ endif()
 
 if (ENABLE_HIP)
     add_subdirectory(hip_source)
+endif()
+
+if (ENABLE_SYCL)
+    add_subdirectory(sycl_source)
 endif()
 
