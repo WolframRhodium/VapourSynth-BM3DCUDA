@@ -3,9 +3,12 @@ name: Build (Linux)
 on:
   push:
     paths:
+      - 'CMakeLists.txt'
       - 'source/*'
       - 'cpu_source/*'
+      - 'hip_source/*'
       - 'rtc_source/*'
+      - 'sycl_source/*'
       - '.github/workflows/linux.yml'
   workflow_dispatch:
 
@@ -38,7 +41,7 @@ jobs:
         echo "LD_LIBRARY_PATH=/usr/local/cuda/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" >> $GITHUB_ENV
 
     - name: Configure (CUDA, CPU)
-      run: cmake -S . -B build -G Ninja
+      run: cmake -S . -B build -G Ninja -LA
         -D USE_NVRTC_STATIC=ON
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="`pwd`/vapoursynth/include"
         -D CMAKE_BUILD_TYPE=Release
@@ -47,10 +50,10 @@ jobs:
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
         -D CMAKE_CUDA_ARCHITECTURES="50;61-real;70-virtual;75-real;86-real;89-real"
 
-    - name: Build
+    - name: Build (CUDA, CPU)
       run: cmake --build build --verbose
 
-    - name: Install
+    - name: Install (CUDA, CPU)
       run: cmake --install build --prefix artifact
 
     - name: Setup HIP
@@ -62,7 +65,8 @@ jobs:
         sudo apt install hip-runtime-amd rocm-device-libs
 
     - name: Configure (HIP)
-      run: cmake -S . -B build_hip -G Ninja -D CMAKE_BUILD_TYPE=Release
+      run: cmake -S . -B build_hip -G Ninja -LA
+        -D CMAKE_BUILD_TYPE=Release
         -D ENABLE_CPU=OFF -D ENABLE_CUDA=OFF -D ENABLE_HIP=ON
         -D CMAKE_CXX_COMPILER=/opt/rocm/bin/amdclang++
         -D CMAKE_CXX_FLAGS="-Wall -ffast-math -munsafe-fp-atomics -Rpass-analysis=kernel-resource-usage"
@@ -78,6 +82,35 @@ jobs:
 
     - name: Install (HIP)
       run: cmake --install build_hip --prefix artifact
+
+    - name: Setup SYCL
+      run: |
+        wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+          | gpg --dearmor \
+          | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+
+        echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+          | sudo tee /etc/apt/sources.list.d/oneAPI.list
+
+        sudo apt-get update
+        sudo apt-get install -y intel-oneapi-dpcpp-cpp-2023.2.1
+
+    - name: Configure (SYCL)
+      run: |
+        source /opt/intel/oneapi/compiler/latest/env/vars.sh
+
+        cmake -S . -B build_sycl -G Ninja -LA \
+          -D CMAKE_BUILD_TYPE=Release \
+          -D ENABLE_CPU=OFF -D ENABLE_CUDA=OFF -D ENABLE_HIP=OFF -D ENABLE_SYCL=ON \
+          -D VAPOURSYNTH_INCLUDE_DIRECTORY="`pwd`/vapoursynth/include" \
+          -D CMAKE_CXX_COMPILER=icpx \
+          -D CMAKE_CXX_FLAGS="-Wall -ffast-math -march=x86-64-v3"
+
+    - name: Build (SYCL)
+      run: cmake --build build_sycl --verbose
+
+    - name: Install (SYCL)
+      run: cmake --install build_sycl --prefix artifact
 
     - name: Upload
       uses: actions/upload-artifact@v3
