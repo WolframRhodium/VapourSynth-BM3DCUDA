@@ -158,7 +158,8 @@ jobs:
           -D ENABLE_SYCL=ON ^
           -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include" ^
           -D CMAKE_CXX_COMPILER=icx ^
-          -D CMAKE_CXX_FLAGS="-ffast-math -mavx"
+          -D CMAKE_CXX_FLAGS="-ffast-math -mavx" ^
+          -D CMAKE_SHARED_LINKER_FLAGS="-fsycl -fsycl-targets=spir64_gen -Xsycl-target-backend=spir64_gen \"-device Gen8,Gen9,Gen11,Gen12LP,XE_HPG_CORE -options -ze-opt-large-register-file\""
 
     - name: Build (SYCL)
       run: |
