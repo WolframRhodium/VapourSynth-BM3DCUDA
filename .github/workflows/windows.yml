@@ -3,10 +3,12 @@ name: Build (Windows)
 on:
   push:
     paths:
+      - 'CMakeLists.txt'
       - 'source/*'
       - 'cpu_source/*'
       - 'rtc_source/*'
       - 'hip_source/*'
+      - 'sycl_source/*'
       - '.github/workflows/windows.yml'
   workflow_dispatch:
     inputs:
@@ -131,6 +133,42 @@ jobs:
     - name: Install (HIP)
       run: cmake --install build_hip --prefix install
 
+    - name: Cache SYCL
+      id: cache-sycl
+      uses: actions/cache@v3
+      with:
+        path: C:\Program Files (x86)\Intel\oneAPI
+        key: ${{ runner.os }}-dpcpp-2023.2.2
+
+    - name: Setup SYCL
+      if: steps.cache-sycl.outputs.cache-hit != 'true'
+      run: |
+        curl -J -o dpcpp_installer.exe https://registrationcenter-download.intel.com/akdlm/IRC_NAS/c08746d2-5669-4ef8-9fc8-1ec330b3ac3b/w_dpcpp-cpp-compiler_p_2023.2.2.49534_offline.exe
+        dpcpp_installer -s -a -s --eula accept
+
+    - name: Configure (SYCL)
+      run: |
+        call "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\env\vars.bat"
+      
+        cmake -S . -B build_sycl -G Ninja -LA ^
+          -D CMAKE_BUILD_TYPE=Release ^
+          -D ENABLE_CUDA=OFF ^
+          -D ENABLE_CPU=OFF ^
+          -D ENABLE_HIP=OFF ^
+          -D ENABLE_SYCL=ON ^
+          -D VAPOURSYNTH_INCLUDE_DIRECTORY="%cd%\vapoursynth\include" ^
+          -D CMAKE_CXX_COMPILER=icx ^
+          -D CMAKE_CXX_FLAGS="-ffast-math -mavx"
+
+    - name: Build (SYCL)
+      run: |
+        call "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\env\vars.bat"
+
+        cmake --build build_sycl --verbose
+
+    - name: Install (SYCL)
+      run: cmake --install build_sycl --prefix install
+
     - name: Prepare for upload
       run: |
         mkdir artifact
@@ -162,6 +200,16 @@ jobs:
         mkdir VapourSynth-BM3DHIP-${{ github.event.inputs.tag }}
         xcopy bm3dhip.dll VapourSynth-BM3DHIP-${{ github.event.inputs.tag }} /f
         7z a -t7z -mx=9 ../VapourSynth-BM3DHIP-${{ github.event.inputs.tag }}.7z VapourSynth-BM3DHIP-${{ github.event.inputs.tag }}
+        
+        mkdir VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }}
+        xcopy bm3dsycl.dll VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }} /f
+        7z a -t7z -mx=9 ../VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }}.7z VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }}
+        
+        mkdir SYCL-Runtime-${{ github.event.inputs.tag }}
+        echo f | xcopy "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\windows\bin\sycl6.dll" SYCL-Runtime-${{ github.event.inputs.tag }} /f
+        echo f | xcopy "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\windows\bin\pi_*.dll" SYCL-Runtime-${{ github.event.inputs.tag }} /f /i
+        echo f | xcopy "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\windows\redist\intel64_win\compiler\libmmd.dll" SYCL-Runtime-${{ github.event.inputs.tag }} /f
+        7z a -t7z -mx=9 ../SYCL-Runtime-${{ github.event.inputs.tag }}.7z SYCL-Runtime-${{ github.event.inputs.tag }}
 
     - name: Release
       uses: softprops/action-gh-release@v1
@@ -173,6 +221,8 @@ jobs:
           VapourSynth-BM3DCUDA_RTC-${{ github.event.inputs.tag }}.7z
           VapourSynth-BM3DCPU-${{ github.event.inputs.tag }}.7z
           VapourSynth-BM3DHIP-${{ github.event.inputs.tag }}.7z
+          VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }}.7z
+          SYCL-Runtime-${{ github.event.inputs.tag }}.7z
         fail_on_unmatched_files: true
         generate_release_notes: false
         prerelease: true
