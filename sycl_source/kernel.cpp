@@ -49,6 +49,11 @@ sycl::event launch(
     sycl::queue & stream
 );
 
+#ifndef SUBGROUP_SIZE
+// ponte vecchio (xe-hpc) should set this to 16
+#define SUBGROUP_SIZE 8
+#endif
+
 static constexpr int smem_stride = 32 + 1;
 
 // https://docs.nvidia.com/cuda/archive/12.2.2/cuda-c-programming-guide/index.html#id36
@@ -782,6 +787,7 @@ sycl::event launch(
                 if (final_) {
                     auto bm3d_kernel = [=](sycl::nd_item<2> it)
                         [[sycl::reqd_work_group_size(1, 32)]]
+                        [[sycl::reqd_sub_group_size(SUBGROUP_SIZE)]]
                         #if defined SYCL_EXT_INTEL_KERNEL_ARGS_RESTRICT && SYCL_EXT_INTEL_KERNEL_ARGS_RESTRICT
                         [[intel::kernel_args_restrict]]
                         #endif
@@ -803,6 +809,7 @@ sycl::event launch(
                 } else {
                     auto bm3d_kernel = [=](sycl::nd_item<2> it)
                         [[sycl::reqd_work_group_size(1, 32)]]
+                        [[sycl::reqd_sub_group_size(SUBGROUP_SIZE)]]
                         #if defined SYCL_EXT_INTEL_KERNEL_ARGS_RESTRICT && SYCL_EXT_INTEL_KERNEL_ARGS_RESTRICT
                         [[intel::kernel_args_restrict]]
                         #endif
@@ -826,6 +833,7 @@ sycl::event launch(
                 if (final_) {
                     auto bm3d_kernel = [=](sycl::nd_item<2> it)
                         [[sycl::reqd_work_group_size(1, 32)]]
+                        [[sycl::reqd_sub_group_size(SUBGROUP_SIZE)]]
                         #if defined SYCL_EXT_INTEL_KERNEL_ARGS_RESTRICT && SYCL_EXT_INTEL_KERNEL_ARGS_RESTRICT
                         [[intel::kernel_args_restrict]]
                         #endif
@@ -847,6 +855,7 @@ sycl::event launch(
                 } else {
                     auto bm3d_kernel = [=](sycl::nd_item<2> it)
                         [[sycl::reqd_work_group_size(1, 32)]]
+                        [[sycl::reqd_sub_group_size(SUBGROUP_SIZE)]]
                         #if defined SYCL_EXT_INTEL_KERNEL_ARGS_RESTRICT && SYCL_EXT_INTEL_KERNEL_ARGS_RESTRICT
                         [[intel::kernel_args_restrict]]
                         #endif
@@ -872,6 +881,7 @@ sycl::event launch(
                 if (final_) {
                     auto bm3d_kernel = [=](sycl::nd_item<2> it)
                         [[sycl::reqd_work_group_size(1, 32)]]
+                        [[sycl::reqd_sub_group_size(SUBGROUP_SIZE)]]
                         #if defined SYCL_EXT_INTEL_KERNEL_ARGS_RESTRICT && SYCL_EXT_INTEL_KERNEL_ARGS_RESTRICT
                         [[intel::kernel_args_restrict]]
                         #endif
@@ -893,6 +903,7 @@ sycl::event launch(
                 } else {
                     auto bm3d_kernel = [=](sycl::nd_item<2> it)
                         [[sycl::reqd_work_group_size(1, 32)]]
+                        [[sycl::reqd_sub_group_size(SUBGROUP_SIZE)]]
                         #if defined SYCL_EXT_INTEL_KERNEL_ARGS_RESTRICT && SYCL_EXT_INTEL_KERNEL_ARGS_RESTRICT
                         [[intel::kernel_args_restrict]]
                         #endif
@@ -916,6 +927,7 @@ sycl::event launch(
                 if (final_) {
                     auto bm3d_kernel = [=](sycl::nd_item<2> it)
                         [[sycl::reqd_work_group_size(1, 32)]]
+                        [[sycl::reqd_sub_group_size(SUBGROUP_SIZE)]]
                         #if defined SYCL_EXT_INTEL_KERNEL_ARGS_RESTRICT && SYCL_EXT_INTEL_KERNEL_ARGS_RESTRICT
                         [[intel::kernel_args_restrict]]
                         #endif
@@ -937,6 +949,7 @@ sycl::event launch(
                 } else {
                     auto bm3d_kernel = [=](sycl::nd_item<2> it)
                         [[sycl::reqd_work_group_size(1, 32)]]
+                        [[sycl::reqd_sub_group_size(SUBGROUP_SIZE)]]
                         #if defined SYCL_EXT_INTEL_KERNEL_ARGS_RESTRICT && SYCL_EXT_INTEL_KERNEL_ARGS_RESTRICT
                         [[intel::kernel_args_restrict]]
                         #endif
