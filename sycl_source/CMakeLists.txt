@@ -22,6 +22,9 @@ add_sycl_to_target(
     TARGET bm3dsycl
     SOURCES source.cpp kernel.cpp)
 
+# for aot compilation for gpus
+target_compile_options(bm3dsycl PRIVATE -fsycl -fsycl-targets=spir64,spir64_gen)
+
 install(TARGETS bm3dsycl
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
