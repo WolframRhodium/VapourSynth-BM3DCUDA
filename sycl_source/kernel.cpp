@@ -385,7 +385,7 @@ static void bm3d(
 ) {
 
     #ifdef SYCL_EXT_ONEAPI_LOCAL_MEMORY
-    float * buffer = *sycl::ext::oneapi::group_local_memory<float[8 * smem_stride]>(it.get_group()).get();
+    float * buffer = *sycl::ext::oneapi::group_local_memory_for_overwrite<float[8 * smem_stride]>(it.get_group()).get();
     #else
     float * buffer = buffer_accessor.get_pointer().get();
     #endif
