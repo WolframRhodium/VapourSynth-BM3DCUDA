@@ -35,7 +35,7 @@ jobs:
         wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
         sudo dpkg -i cuda-keyring_1.1-1_all.deb
         sudo apt-get update
-        sudo apt-get install -y cuda-nvcc-12-0 cuda-cudart-dev-12-0 cuda-nvrtc-dev-12-0
+        sudo apt-get install -y cuda-nvcc-12-3 cuda-cudart-dev-12-3 cuda-nvrtc-dev-12-3
         echo "PATH=/usr/local/cuda/bin${PATH:+:${PATH}}" >> $GITHUB_ENV
         echo "CUDA_PATH=/usr/local/cuda" >> $GITHUB_ENV
         echo "LD_LIBRARY_PATH=/usr/local/cuda/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" >> $GITHUB_ENV
@@ -59,7 +59,7 @@ jobs:
     - name: Setup HIP
       run: |
         wget https://repo.radeon.com/rocm/rocm.gpg.key -O - | gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg > /dev/null
-        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/5.7.1 jammy main" | sudo tee --append /etc/apt/sources.list.d/rocm.list
+        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.0 jammy main" | sudo tee --append /etc/apt/sources.list.d/rocm.list
         echo -e 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600' | sudo tee /etc/apt/preferences.d/rocm-pin-600
         sudo apt update
         sudo apt install hip-runtime-amd rocm-device-libs
@@ -93,7 +93,7 @@ jobs:
           | sudo tee /etc/apt/sources.list.d/oneAPI.list
 
         sudo apt-get update
-        sudo apt-get install -y intel-oneapi-dpcpp-cpp-2023.2.1
+        sudo apt-get install -y intel-oneapi-dpcpp-cpp-2024.0
 
     - name: Setup ocloc
       run: |
@@ -105,6 +105,8 @@ jobs:
 
         sudo apt-get update
         sudo apt-get install -y intel-opencl-icd
+        
+        ocloc compile --help
 
     - name: Configure (SYCL)
       run: |
@@ -116,10 +118,13 @@ jobs:
           -D VAPOURSYNTH_INCLUDE_DIRECTORY="`pwd`/vapoursynth/include" \
           -D CMAKE_CXX_COMPILER=icpx \
           -D CMAKE_CXX_FLAGS="-Wall -ffast-math -march=x86-64-v3" \
-          -D CMAKE_SHARED_LINKER_FLAGS="-fsycl -fsycl-targets=spir64_gen -Xsycl-target-backend=spir64_gen \"-device Gen8,Gen9,Gen11,Gen12LP,XE_HPG_CORE -options -ze-opt-large-register-file\""
+          -D CMAKE_SHARED_LINKER_FLAGS="-fsycl -fsycl-targets=spir64_gen -Xsycl-target-backend=spir64_gen \"-device gen8,gen9,gen11,gen12lp,xe-hpg,xe-lpg\""
 
     - name: Build (SYCL)
-      run: cmake --build build_sycl --verbose
+      run: |
+        source /opt/intel/oneapi/compiler/latest/env/vars.sh
+
+        cmake --build build_sycl --verbose
 
     - name: Install (SYCL)
       run: cmake --install build_sycl --prefix artifact
