@@ -47,13 +47,13 @@ jobs:
       uses: actions/cache@v3
       with:
         path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
-        key: ${{ runner.os }}-cuda-12.0.0
+        key: ${{ runner.os }}-cuda-12.5.1
 
     - name: Setup CUDA
       if: steps.cache-cuda.outputs.cache-hit != 'true'
       run: |
-        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/12.0.0/network_installers/cuda_12.0.0_windows_network.exe
-        cuda_installer.exe -s nvcc_12.0 cudart_12.0 nvrtc_dev_12.0
+        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/12.5.1/network_installers/cuda_12.5.1_windows_network.exe
+        cuda_installer.exe -s nvcc_12.5 cudart_12.5 nvrtc_dev_12.5
 
     - name: Configure (CUDA)
       shell: bash
@@ -68,8 +68,7 @@ jobs:
         -D CMAKE_CUDA_ARCHITECTURES="50;61-real;70-virtual;75-real;86-real;89-real"
         -D CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
       env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.0
-        CUDA_PATH_V12_0: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.0
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.5
 
     - name: Build (CUDA)
       run: cmake --build build --verbose
