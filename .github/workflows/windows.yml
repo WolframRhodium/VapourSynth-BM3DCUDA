@@ -103,13 +103,13 @@ jobs:
       uses: actions/cache@v3
       with:
         path: C:\Program Files\AMD\ROCM
-        key: ${{ runner.os }}-rocm-5.7.0
+        key: ${{ runner.os }}-rocm-6.1.2
 
     - name: Setup HIP
       if: steps.cache-hip.outputs.cache-hit != 'true'
       shell: pwsh
       run: |
-        curl -s -o hip_installer.exe -L https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-23.Q4-WinSvr2022-For-HIP.exe
+        curl -s -o hip_installer.exe -L https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q3-WinSvr2022-For-HIP.exe
         Start-Process hip_installer.exe -ArgumentList '-install' -NoNewWindow -Wait
 
     - name: Configure (HIP)
@@ -120,11 +120,11 @@ jobs:
         -D ENABLE_CPU=OFF
         -D ENABLE_HIP=ON
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="$(pwd)\vapoursynth\include"
-        -D CMAKE_CXX_COMPILER="C:/Program Files/AMD/ROCm/5.7/bin/clang++.exe"
+        -D CMAKE_CXX_COMPILER="C:/Program Files/AMD/ROCm/6.1/bin/clang++.exe"
         -D CMAKE_CXX_FLAGS="-ffast-math -munsafe-fp-atomics -Rpass-analysis=kernel-resource-usage"
-        -D HIP_DIR="C:/Program Files/AMD/ROCm/5.7/lib/cmake/hip"
+        -D HIP_DIR="C:/Program Files/AMD/ROCm/6.1/lib/cmake/hip"
         -D HIP_PLATFORM=amd
-        -D GPU_TARGETS="gfx1030;gfx1032;gfx1100;gfx1102"
+        -D GPU_TARGETS="gfx1030;gfx1031;gfx1032;gfx1100;gfx1101;gfx1102"
         -D CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
 
     - name: Build (HIP)
