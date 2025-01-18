@@ -1,0 +1,63 @@
+name: Build (Linux, ARM64)
+
+on:
+  push:
+    paths:
+      - 'CMakeLists.txt'
+      - 'source/*'
+      - 'cpu_source/*'
+      - 'hip_source/*'
+      - 'rtc_source/*'
+      - 'sycl_source/*'
+      - '.github/workflows/linux-arm64.yml'
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-24.04-arm
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+
+    - name: Setup Ninja
+      run: pip install ninja
+
+    - name: Download VapourSynth headers
+      run: |
+        wget -q -O vs.zip https://github.com/vapoursynth/vapoursynth/archive/refs/tags/R57.zip
+        unzip -q vs.zip
+        mv vapoursynth*/ vapoursynth
+
+    - name: Setup CUDA
+      run: |
+        wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/sbsa/cuda-keyring_1.1-1_all.deb
+        sudo dpkg -i cuda-keyring_1.1-1_all.deb
+        sudo apt-get update
+        sudo apt-get install -y cuda-nvcc-12-6 cuda-cudart-dev-12-6 cuda-nvrtc-dev-12-6
+        echo "PATH=/usr/local/cuda/bin${PATH:+:${PATH}}" >> $GITHUB_ENV
+        echo "CUDA_PATH=/usr/local/cuda" >> $GITHUB_ENV
+        echo "LD_LIBRARY_PATH=/usr/local/cuda/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" >> $GITHUB_ENV
+
+    - name: Configure (CUDA)
+      run: cmake -S . -B build -G Ninja -LA
+        -D ENABLE_CPU=OFF
+        -D USE_NVRTC_STATIC=ON
+        -D VAPOURSYNTH_INCLUDE_DIRECTORY="`pwd`/vapoursynth/include"
+        -D CMAKE_BUILD_TYPE=Release
+        -D CMAKE_CXX_FLAGS="-Wall -ffast-math"
+        -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
+        -D CMAKE_CUDA_ARCHITECTURES="50;61-real;70-virtual;75-real;86-real;89-real;90-real"
+
+    - name: Build (CUDA)
+      run: cmake --build build --verbose
+
+    - name: Install (CUDA)
+      run: cmake --install build --prefix artifact
+
+    - name: Upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: VapourSynth-BM3DCUDA-Linux-ARM64
+        path: artifact
