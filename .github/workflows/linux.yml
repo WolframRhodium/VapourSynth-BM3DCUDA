@@ -103,7 +103,7 @@ jobs:
           | sudo tee /etc/apt/sources.list.d/intel-gpu-jammy.list
 
         sudo apt-get update
-        sudo apt-get install -y intel-opencl-icd
+        sudo apt-get install -y intel-ocloc
         
         ocloc compile --help
 
