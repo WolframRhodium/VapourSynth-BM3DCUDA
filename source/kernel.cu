@@ -367,7 +367,7 @@ template <bool temporal=false, bool chroma=false, bool final_=false>
 __global__
 #if __CUDA_ARCH__ == 750 || __CUDA_ARCH__ == 860
 __launch_bounds__(32, 16)
-#elif __CUDA_ARCH__ == 890
+#elif __CUDA_ARCH__ == 890 || __CUDA_ARCH__ == 1200
 __launch_bounds__(32, 24)
 #else
 __launch_bounds__(32, 32)
@@ -741,8 +741,13 @@ static void bm3d(
                 wdst_val = (wdst_val + extractor) - extractor;
                 weight_val = (weight_val + extractor) - extractor;
 
+#if defined(CUDART_VERSION) && CUDART_VERSION >= 12080
+                __nv_atomic_add(&wdstp[j * stride], wdst_val, __NV_ATOMIC_RELAXED, __NV_THREAD_SCOPE_DEVICE);
+                __nv_atomic_add(&weightp[j * stride], weight_val, __NV_ATOMIC_RELAXED, __NV_THREAD_SCOPE_DEVICE);
+#else // defined(CUDART_VERSION) && CUDART_VERSION >= 12080
                 atomicAdd(&wdstp[j * stride], wdst_val);
                 atomicAdd(&weightp[j * stride], weight_val);
+#endif // defined(CUDART_VERSION) && CUDART_VERSION >= 12080
             }
         }
 
