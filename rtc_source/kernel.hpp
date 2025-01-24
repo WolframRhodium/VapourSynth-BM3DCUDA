@@ -1048,13 +1048,13 @@ void bm3d(
                 wdst_val = (wdst_val + extractor) - extractor;
                 weight_val = (weight_val + extractor) - extractor;
 
-#if defined(CUDART_VERSION) && CUDART_VERSION >= 12080
+#if defined(CUDART_VERSION) && CUDART_VERSION >= 12080 && __CUDA_ARCH__ >= 700
                 __nv_atomic_add(&wdstp[j * stride], wdst_val, __NV_ATOMIC_RELAXED, __NV_THREAD_SCOPE_DEVICE);
                 __nv_atomic_add(&weightp[j * stride], weight_val, __NV_ATOMIC_RELAXED, __NV_THREAD_SCOPE_DEVICE);
-#else // defined(CUDART_VERSION) && CUDART_VERSION >= 12080
+#else // defined(CUDART_VERSION) && CUDART_VERSION >= 12080 && __CUDA_ARCH__ >= 700
                 atomicAdd(&wdstp[j * stride], wdst_val);
                 atomicAdd(&weightp[j * stride], weight_val);
-#endif // defined(CUDART_VERSION) && CUDART_VERSION >= 12080
+#endif // defined(CUDART_VERSION) && CUDART_VERSION >= 12080 && __CUDA_ARCH__ >= 700
             }
         }
 
