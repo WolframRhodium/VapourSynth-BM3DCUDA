@@ -26,7 +26,7 @@ jobs:
 
     steps:
     - name: Checkout repo
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         fetch-depth: 1
 
@@ -44,16 +44,16 @@ jobs:
 
     - name: Cache CUDA
       id: cache-cuda
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
-        key: ${{ runner.os }}-cuda-12.5.1
+        key: ${{ runner.os }}-cuda-12.8.0
 
     - name: Setup CUDA
       if: steps.cache-cuda.outputs.cache-hit != 'true'
       run: |
-        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/12.5.1/network_installers/cuda_12.5.1_windows_network.exe
-        cuda_installer.exe -s nvcc_12.5 cudart_12.5 nvrtc_dev_12.5
+        curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/12.8.0/network_installers/cuda_12.8.0_windows_network.exe
+        cuda_installer.exe -s nvcc_12.8 cudart_12.8 nvrtc_dev_12.8
 
     - name: Configure (CUDA)
       shell: bash
@@ -65,22 +65,16 @@ jobs:
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="$(pwd)\vapoursynth\include"
         -D CMAKE_CXX_FLAGS="/fp:fast /arch:AVX /EHsc"
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
-        -D CMAKE_CUDA_ARCHITECTURES="50;61-real;70-virtual;75-real;86-real;89-real"
+        -D CMAKE_CUDA_ARCHITECTURES="50;61-real;70-virtual;75-real;86-real;89-real;120-real"
         -D CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
       env:
-        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.5
+        CUDA_PATH: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8
 
     - name: Build (CUDA)
       run: cmake --build build --verbose
 
     - name: Install (CUDA)
       run: cmake --install build --prefix install
-
-    - name: Setup LLVM
-      shell: bash
-      run: |
-        curl -s -o llvm-win64.exe -LJO https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/LLVM-18.1.8-win64.exe
-        7z x -ollvm llvm-win64.exe
 
     - name: Configure, build, install (CPU)
       shell: bash
@@ -90,7 +84,7 @@ jobs:
             -D ENABLE_CUDA=OFF
             -D ENABLE_CPU=ON
             -D VAPOURSYNTH_INCLUDE_DIRECTORY="$(pwd)\vapoursynth\include"
-            -D CMAKE_CXX_COMPILER="$(pwd)/llvm/bin/clang++.exe"
+            -D CMAKE_CXX_COMPILER="clang++.exe"
             -D CMAKE_CXX_FLAGS="-mtune=${arch} -ffast-math"
             -D CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
           && cmake --build build_cpu --verbose
@@ -184,7 +178,7 @@ jobs:
         copy install\bin\*.dll artifact
 
     - name: Upload
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: VapourSynth-BM3DCUDA-Windows
         path: artifact
