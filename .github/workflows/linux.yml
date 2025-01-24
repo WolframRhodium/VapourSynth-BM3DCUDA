@@ -83,6 +83,7 @@ jobs:
       run: cmake --install build_hip --prefix artifact
 
     - name: Setup SYCL
+      if: false
       run: |
         wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
           | gpg --dearmor \
@@ -95,6 +96,7 @@ jobs:
         sudo apt-get install -y intel-oneapi-dpcpp-cpp-2024.0
 
     - name: Setup ocloc
+      if: false
       run: |
         wget -qO - https://repositories.intel.com/gpu/intel-graphics.key \
           | sudo gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg
@@ -108,6 +110,7 @@ jobs:
         ocloc compile --help
 
     - name: Configure (SYCL)
+      if: false
       run: |
         source /opt/intel/oneapi/compiler/latest/env/vars.sh
 
@@ -117,15 +120,17 @@ jobs:
           -D VAPOURSYNTH_INCLUDE_DIRECTORY="`pwd`/vapoursynth/include" \
           -D CMAKE_CXX_COMPILER=icpx \
           -D CMAKE_CXX_FLAGS="-Wall -ffast-math -march=x86-64-v3" \
-          -D CMAKE_SHARED_LINKER_FLAGS="-fsycl -fsycl-targets=spir64_gen -Xsycl-target-backend=spir64_gen \"-device gen8,gen9,gen11,gen12lp,xe-hpg,xe-lpg\""
+          -D CMAKE_SHARED_LINKER_FLAGS="-fsycl -fsycl-targets=spir64_gen -Xsycl-target-backend=spir64_gen \"-device gen12lp,xe-hpg,xe-lpg,xe-lpgplus\""
 
     - name: Build (SYCL)
+      if: false
       run: |
         source /opt/intel/oneapi/compiler/latest/env/vars.sh
 
         cmake --build build_sycl --verbose
 
     - name: Install (SYCL)
+      if: false
       run: cmake --install build_sycl --prefix artifact
 
     - name: Upload
