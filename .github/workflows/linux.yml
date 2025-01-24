@@ -14,12 +14,12 @@ on:
 
 jobs:
   build-linux:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
     - name: Checkout repo
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
-        fetch-depth: 1
+        fetch-depth: 0
 
     - name: Setup Ninja
       run: pip install ninja
@@ -32,10 +32,10 @@ jobs:
 
     - name: Setup CUDA
       run: |
-        wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+        wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
         sudo dpkg -i cuda-keyring_1.1-1_all.deb
         sudo apt-get update
-        sudo apt-get install -y cuda-nvcc-12-3 cuda-cudart-dev-12-3 cuda-nvrtc-dev-12-3
+        sudo apt-get install -y cuda-nvcc-12-8 cuda-cudart-dev-12-8 cuda-nvrtc-dev-12-8
         echo "PATH=/usr/local/cuda/bin${PATH:+:${PATH}}" >> $GITHUB_ENV
         echo "CUDA_PATH=/usr/local/cuda" >> $GITHUB_ENV
         echo "LD_LIBRARY_PATH=/usr/local/cuda/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" >> $GITHUB_ENV
@@ -45,10 +45,9 @@ jobs:
         -D USE_NVRTC_STATIC=ON
         -D VAPOURSYNTH_INCLUDE_DIRECTORY="`pwd`/vapoursynth/include"
         -D CMAKE_BUILD_TYPE=Release
-        -D CMAKE_CXX_COMPILER=g++-12
         -D CMAKE_CXX_FLAGS="-Wall -ffast-math -march=x86-64-v3"
         -D CMAKE_CUDA_FLAGS="--threads 0 --use_fast_math --resource-usage -Wno-deprecated-gpu-targets"
-        -D CMAKE_CUDA_ARCHITECTURES="50;61-real;70-virtual;75-real;86-real;89-real"
+        -D CMAKE_CUDA_ARCHITECTURES="50;61-real;70;75-real;86-real;89-real;90-real;100-real;120-real"
 
     - name: Build (CUDA, CPU)
       run: cmake --build build --verbose
@@ -130,7 +129,7 @@ jobs:
       run: cmake --install build_sycl --prefix artifact
 
     - name: Upload
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: VapourSynth-BM3DCUDA-Linux
         path: artifact
