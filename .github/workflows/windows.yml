@@ -83,6 +83,8 @@ jobs:
       run: |
         curl -s -o llvm-win64.exe -LJO https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.0-rc2/LLVM-20.1.0-rc2-win64.exe
         7z x -ollvm llvm-win64.exe
+        mkdir install
+        mkdir install/bin
 
     - name: Configure, build, install (CPU)
       shell: bash
