@@ -34,6 +34,7 @@ jobs:
       run: pip install ninja
 
     - name: Cache CUDA
+      if: false
       id: cache-cuda
       uses: actions/cache@v4
       with:
@@ -41,7 +42,7 @@ jobs:
         key: ${{ runner.os }}-cuda-12.0.0
 
     - name: Setup CUDA
-      if: steps.cache-cuda.outputs.cache-hit != 'true'
+      if: steps.cache-cuda.outputs.cache-hit != 'true' && false
       run: |
         curl -s -o cuda_installer.exe -L https://developer.download.nvidia.com/compute/cuda/12.0.0/network_installers/cuda_12.0.0_windows_network.exe
         cuda_installer.exe -s nvcc_12.0 cudart_12.0 nvrtc_dev_12.0
@@ -53,6 +54,7 @@ jobs:
         mv vapoursynth-*/ vapoursynth/
 
     - name: Configure (CUDA)
+      if: false
       shell: bash
       run: cmake -S . -B build -G Ninja -LA
         -D CMAKE_BUILD_TYPE=Release
@@ -69,9 +71,11 @@ jobs:
         CUDA_PATH_V12_0: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.0
 
     - name: Build (CUDA)
+      if: false
       run: cmake --build build --verbose
 
     - name: Install (CUDA)
+      if: false
       run: cmake --install build --prefix install
 
     - name: Setup LLVM
@@ -108,7 +112,7 @@ jobs:
         path: artifact
 
     - name: Compress artifact for release
-      if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+      if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && false
       run: |
         cd artifact
 
