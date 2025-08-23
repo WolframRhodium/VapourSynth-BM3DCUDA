@@ -128,6 +128,7 @@ jobs:
       run: cmake --install build_hip --prefix install
 
     - name: Cache SYCL
+      if: false
       id: cache-sycl
       uses: actions/cache@v3
       with:
@@ -135,18 +136,20 @@ jobs:
         key: ${{ runner.os }}-dpcpp-2024.0
 
     - name: Setup SYCL
-      if: steps.cache-sycl.outputs.cache-hit != 'true'
+      if: false && steps.cache-sycl.outputs.cache-hit != 'true'
       run: |
         curl -J -o dpcpp_installer.exe https://registrationcenter-download.intel.com/akdlm/IRC_NAS/94e15cb5-4bcc-4fdd-91cf-0f819a54e42e/w_dpcpp-cpp-compiler_p_2024.0.2.28_offline.exe
         dpcpp_installer -s -a -s --eula accept
 
     - name: Setup ocloc (Gen12+)
+      if: false
       shell: pwsh
       run: |
         $env:PATH = "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\lib\ocloc;$env:PATH"
         "PATH=$env:PATH" | Out-File -Append -FilePath $env:GITHUB_ENV
 
     - name: Configure (SYCL, Gen12+)
+      if: false
       run: |
         ocloc compile --help
 
@@ -164,12 +167,14 @@ jobs:
           -D CMAKE_SHARED_LINKER_FLAGS="-fsycl -fsycl-targets=spir64_gen -Xsycl-target-backend=spir64_gen \"-device gen12lp,xe-hpg\""
 
     - name: Build (SYCL, Gen12+)
+      if: false
       run: |
         call "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\env\vars.bat"
 
         cmake --build build_sycl_gen12+ --verbose
 
     - name: Install (SYCL, Gen12+)
+      if: false
       run: echo f | xcopy build_sycl_gen12+\sycl_source\bm3dsycl.dll install\bin\bm3dsycl_gen12+.dll /f
 
     - name: Prepare for upload
@@ -204,15 +209,15 @@ jobs:
         xcopy bm3dhip.dll VapourSynth-BM3DHIP-${{ github.event.inputs.tag }} /f
         7z a -t7z -mx=9 ../VapourSynth-BM3DHIP-${{ github.event.inputs.tag }}.7z VapourSynth-BM3DHIP-${{ github.event.inputs.tag }}
         
-        mkdir VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }}
-        xcopy bm3dsycl_*.dll VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }} /f
-        7z a -t7z -mx=9 ../VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }}.7z VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }}
+        :: mkdir VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }}
+        :: xcopy bm3dsycl_*.dll VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }} /f
+        :: 7z a -t7z -mx=9 ../VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }}.7z VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }}
         
-        mkdir SYCL-Runtime-${{ github.event.inputs.tag }}
-        echo f | xcopy "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\windows\bin\sycl6.dll" SYCL-Runtime-${{ github.event.inputs.tag }} /f
-        echo f | xcopy "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\windows\bin\pi_*.dll" SYCL-Runtime-${{ github.event.inputs.tag }} /f /i
-        echo f | xcopy "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\windows\redist\intel64_win\compiler\libmmd.dll" SYCL-Runtime-${{ github.event.inputs.tag }} /f
-        7z a -t7z -mx=9 ../SYCL-Runtime-${{ github.event.inputs.tag }}.7z SYCL-Runtime-${{ github.event.inputs.tag }}
+        :: mkdir SYCL-Runtime-${{ github.event.inputs.tag }}
+        :: echo f | xcopy "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\windows\bin\sycl6.dll" SYCL-Runtime-${{ github.event.inputs.tag }} /f
+        :: echo f | xcopy "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\windows\bin\pi_*.dll" SYCL-Runtime-${{ github.event.inputs.tag }} /f /i
+        :: echo f | xcopy "C:\Program Files (x86)\Intel\oneAPI\compiler\latest\windows\redist\intel64_win\compiler\libmmd.dll" SYCL-Runtime-${{ github.event.inputs.tag }} /f
+        :: 7z a -t7z -mx=9 ../SYCL-Runtime-${{ github.event.inputs.tag }}.7z SYCL-Runtime-${{ github.event.inputs.tag }}
 
     - name: Release
       uses: softprops/action-gh-release@v1
@@ -224,8 +229,8 @@ jobs:
           VapourSynth-BM3DCUDA_RTC-${{ github.event.inputs.tag }}.7z
           VapourSynth-BM3DCPU-${{ github.event.inputs.tag }}.7z
           VapourSynth-BM3DHIP-${{ github.event.inputs.tag }}.7z
-          VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }}.7z
-          SYCL-Runtime-${{ github.event.inputs.tag }}.7z
+          # VapourSynth-BM3DSYCL-${{ github.event.inputs.tag }}.7z
+          # SYCL-Runtime-${{ github.event.inputs.tag }}.7z
         fail_on_unmatched_files: true
         generate_release_notes: false
         prerelease: true
