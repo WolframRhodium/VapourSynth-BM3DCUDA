@@ -58,9 +58,8 @@ extern cudaGraphExec_t get_graphexec(
     }                                                                    \
 } while(0)
 
+#define PLUGIN_ID "com.wolframrhodium.bm3dcuda"
 constexpr int kFast = 4;
-
-static VSPlugin * myself = nullptr;
 
 struct ticket_semaphore {
     std::atomic<intptr_t> ticket {};
@@ -942,7 +941,8 @@ static void VS_CC BM3Dv2Create(
         return ;
     }
 
-    auto map = vsapi->invoke(myself, "BM3D", in);
+    auto plugin = vsapi->getPluginById(PLUGIN_ID, core);
+    auto map = vsapi->invoke(plugin, "BM3D", in);
     if (auto error = vsapi->getError(map); error) {
         vsapi->setError(out, error);
         vsapi->freeMap(map);
@@ -974,7 +974,7 @@ static void VS_CC BM3Dv2Create(
         }
     }
 
-    auto map2 = vsapi->invoke(myself, "VAggregate", map);
+    auto map2 = vsapi->invoke(plugin, "VAggregate", map);
     vsapi->freeMap(map);
     if (auto error = vsapi->getError(map2); error) {
         vsapi->setError(out, error);
@@ -992,10 +992,8 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
     VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin
 ) {
 
-    myself = plugin;
-
     configFunc(
-        "com.wolframrhodium.bm3dcuda", "bm3dcuda",
+        PLUGIN_ID, "bm3dcuda",
         "BM3D algorithm implemented in CUDA",
         VAPOURSYNTH_API_VERSION, 1, plugin
     );

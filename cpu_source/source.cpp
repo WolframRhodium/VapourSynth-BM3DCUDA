@@ -66,7 +66,7 @@
 
 #include "cpuid.h"
 
-static VSPlugin * myself = nullptr;
+#define PLUGIN_ID "com.wolframrhodium.bm3dcpu"
 
 struct BM3DData {
     VSNodeRef * node;
@@ -1634,7 +1634,8 @@ static void VS_CC BM3Dv2Create(
         return ;
     }
 
-    auto map = vsapi->invoke(myself, "BM3D", in);
+    auto plugin = vsapi->getPluginById(PLUGIN_ID, core);
+    auto map = vsapi->invoke(plugin, "BM3D", in);
     if (auto error = vsapi->getError(map); error) {
         vsapi->setError(out, error);
         vsapi->freeMap(map);
@@ -1666,7 +1667,7 @@ static void VS_CC BM3Dv2Create(
         }
     }
 
-    auto map2 = vsapi->invoke(myself, "VAggregate", map);
+    auto map2 = vsapi->invoke(plugin, "VAggregate", map);
     vsapi->freeMap(map);
     if (auto error = vsapi->getError(map2); error) {
         vsapi->setError(out, error);
@@ -1684,10 +1685,8 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
     VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin
 ) {
 
-    myself = plugin;
-
     configFunc(
-        "com.wolframrhodium.bm3dcpu", "bm3dcpu",
+        PLUGIN_ID, "bm3dcpu",
         "BM3D algorithm implemented in AVX and AVX2 intrinsics",
         VAPOURSYNTH_API_VERSION, 1, plugin);
 
