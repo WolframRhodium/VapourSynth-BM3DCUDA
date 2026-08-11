@@ -1365,8 +1365,8 @@ static void VS_CC BM3DCreate(
 
         if (error) {
             ps_num = (i == 0) ? 2 : d->ps_num[i - 1];
-        } else if (ps_num <= 0) {
-            return set_error("\"ps_num\" must be positive");
+        } else if (ps_num <= 0 || ps_num > 8) {
+            return set_error("\"ps_num\" must be in range [1, 8]");
         }
 
         d->ps_num[i] = ps_num;
