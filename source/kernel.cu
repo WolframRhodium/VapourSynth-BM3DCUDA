@@ -25,7 +25,10 @@
 // WolframRhodium, 8 May 2021
 
 #include <cfloat>
+#include <string>
 #include <type_traits>
+#include <variant>
+#include <vector>
 
 #ifndef __CUDACC__
 #define __CUDACC__
@@ -52,7 +55,43 @@ cudaGraphExec_t get_graphexec(
     bool final_, float extractor
 ) noexcept;
 
+std::variant<cudaGraphExec_t, std::string> get_fused_graphexec(
+    float * d_res, float * d_src, float * h_res,
+    int * d_params, int * h_params,
+    int width, int height, int stride,
+    float sigma, int block_step, int bm_range,
+    int radius, int ps_num, int ps_range,
+    bool chroma, float sigma_u, float sigma_v,
+    bool final_, float extractor
+) noexcept;
+
 static constexpr int smem_stride = 32 + 1;
+
+extern "C" __global__ void temporal_normalize(
+    float * __restrict__ res,
+    int width, int height, int stride,
+    int num_planes, int centers
+) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y;
+    const int plane = blockIdx.z;
+    if (x >= width || y >= height || plane >= num_planes) {
+        return;
+    }
+
+    const size_t image_stride = static_cast<size_t>(height) * stride;
+    const size_t plane_stride = 2 * image_stride;
+    const size_t center_stride = num_planes * plane_stride;
+    float weighted_sum = 0.0f;
+    float weight = 0.0f;
+    for (int center = 0; center < centers; ++center) {
+        const size_t offset = center * center_stride + plane * plane_stride + y * stride + x;
+        weighted_sum += res[offset];
+        weight += res[offset + image_stride];
+    }
+
+    res[plane * plane_stride + y * stride + x] = __fdiv_rn(weighted_sum, weight);
+}
 
 template <auto transform_impl, int stride=256, int howmany=8, int howmany_stride=32>
 __device__
@@ -363,7 +402,7 @@ static inline float collaborative_wiener(
 }
 
 // BM3D kernel
-template <bool temporal=false, bool chroma=false, bool final_=false>
+template <bool temporal=false, bool chroma=false, bool final_=false, bool fused=false>
 __global__
 #if __CUDA_ARCH__ == 750 || __CUDA_ARCH__ == 860
 __launch_bounds__(32, 16)
@@ -381,7 +420,10 @@ static void bm3d(
     float sigma, int block_step, int bm_range,
     int _radius, int ps_num, int ps_range,
     [[maybe_unused]] float sigma_u, [[maybe_unused]] float sigma_v,
-    float extractor // used for deteriministic summation
+    float extractor, // used for deteriministic summation
+    int source_temporal_width,
+    const int * __restrict__ fused_params,
+    int fused_center
 ) {
 
     __shared__ float buffer[8 * smem_stride];
@@ -406,11 +448,20 @@ static void bm3d(
 
     int temporal_stride = height * stride;
     int temporal_width = 2 * radius + 1;
-    int plane_stride = temporal_width * temporal_stride;
-    int clip_stride = (chroma ? 3 : 1) * temporal_width * temporal_stride;
+    int source_valid_width = source_temporal_width;
+    int source_center = radius;
+    int output_z = -1;
+    if constexpr (fused) {
+        source_valid_width = fused_params[0];
+        source_center = fused_params[1 + 2 * fused_center];
+        output_z = fused_params[2 + 2 * fused_center];
+    }
+    int source_plane_stride = (fused ? source_temporal_width : temporal_width) * temporal_stride;
+    int result_plane_stride = (fused ? 1 : temporal_width) * temporal_stride;
+    int clip_stride = (chroma ? 3 : 1) * source_plane_stride;
 
     float current_patch[8];
-    const float * const srcpc = &src[radius * temporal_stride + sub_lane_id];
+    const float * const srcpc = &src[source_center * temporal_stride + sub_lane_id];
 
     {
         const float * srcp = &srcpc[y * stride + x];
@@ -520,7 +571,13 @@ static void bm3d(
                 int frame_index8_x = 0;
                 int frame_index8_y = 0;
 
-                const float * temporal_srcpc = &src[temporal_index * temporal_stride + sub_lane_id];
+                int source_index = temporal_index;
+                if constexpr (fused) {
+                    source_index = min(max(
+                        source_center - radius + temporal_index, 0),
+                        source_valid_width - 1);
+                }
+                const float * temporal_srcpc = &src[source_index * temporal_stride + sub_lane_id];
 
                 for (int i = 0; i < ps_num; ++i) {
                     int xx = __shfl_sync(0xFFFFFFFF, last_index8_x, i, 8);
@@ -663,8 +720,8 @@ static void bm3d(
 
         if constexpr (chroma) {
             if (sigma < FLT_EPSILON) {
-                src += plane_stride;
-                res += plane_stride * 2;
+                src += source_plane_stride;
+                res += result_plane_stride * 2;
                 continue;
             }
         }
@@ -678,7 +735,13 @@ static void bm3d(
                 const float * refp;
                 if constexpr (temporal) {
                     int tmp_z = __shfl_sync(0xFFFFFFFF, index8_z, i, 8);
-                    refp = &src[tmp_z * temporal_stride + tmp_y * stride + tmp_x + sub_lane_id];
+                    int source_index = tmp_z;
+                    if constexpr (fused) {
+                        source_index = min(max(
+                            source_center - radius + tmp_z, 0),
+                            source_valid_width - 1);
+                    }
+                    refp = &src[source_index * temporal_stride + tmp_y * stride + tmp_x + sub_lane_id];
                 } else {
                     refp = &src[tmp_y * stride + tmp_x + sub_lane_id];
                 }
@@ -700,7 +763,13 @@ static void bm3d(
                 const float * srcp;
                 if constexpr (temporal) {
                     int tmp_z = __shfl_sync(0xFFFFFFFF, index8_z, i, 8);
-                    srcp = &src[tmp_z * temporal_stride + tmp_y * stride + tmp_x + sub_lane_id];
+                    int source_index = tmp_z;
+                    if constexpr (fused) {
+                        source_index = min(max(
+                            source_center - radius + tmp_z, 0),
+                            source_valid_width - 1);
+                    }
+                    srcp = &src[source_index * temporal_stride + tmp_y * stride + tmp_x + sub_lane_id];
                 } else {
                     srcp = &src[tmp_y * stride + tmp_x + sub_lane_id];
                 }
@@ -724,6 +793,12 @@ static void bm3d(
             int offset;
             if constexpr (temporal) {
                 int tmp_z = __shfl_sync(0xFFFFFFFF, index8_z, i, 8);
+                if constexpr (fused) {
+                    if (tmp_z != output_z) {
+                        continue;
+                    }
+                    tmp_z = 0;
+                }
                 offset = tmp_z * 2 * temporal_stride + tmp_y * stride + tmp_x;
             } else {
                 offset = tmp_y * stride + tmp_x;
@@ -751,8 +826,8 @@ static void bm3d(
             }
         }
 
-        src += plane_stride;
-        res += plane_stride * 2;
+        src += source_plane_stride;
+        res += result_plane_stride * 2;
     }
 }
 
@@ -802,13 +877,17 @@ cudaGraphExec_t get_graphexec(
     cudaGraphNode_t n_kernel;
     {
         cudaGraphNode_t dependencies[] { n_HtoD, n_memset };
+        int source_temporal_width = temporal_width;
+        const int * fused_params = nullptr;
+        int fused_center = 0;
 
         void * kernelArgs[] {
             &d_res, &d_src,
             &width, &height, &stride,
             &sigma, &block_step, &bm_range,
             &radius, &ps_num, &ps_range,
-            &sigma_u, &sigma_v, &extractor
+            &sigma_u, &sigma_v, &extractor,
+            &source_temporal_width, &fused_params, &fused_center
         };
 
         cudaKernelNodeParams kernel_params {};
@@ -838,7 +917,6 @@ cudaGraphExec_t get_graphexec(
     cudaGraphNode_t n_DtoH;
     {
         cudaGraphNode_t dependencies[] { n_kernel };
-
         cudaMemcpy3DParms copy_params {};
         int logical_height { num_planes * temporal_width * 2 * height };
         copy_params.srcPtr = make_cudaPitchedPtr(
@@ -861,4 +939,164 @@ cudaGraphExec_t get_graphexec(
     cudaGraphDestroy(graph);
 
     return graphexecp;
+}
+
+std::variant<cudaGraphExec_t, std::string> get_fused_graphexec(
+    float * d_res, float * d_src, float * h_res,
+    int * d_params, int * h_params,
+    int width, int height, int stride,
+    float sigma, int block_step, int bm_range,
+    int radius, int ps_num, int ps_range,
+    bool chroma, float sigma_u, float sigma_v,
+    bool final_, float extractor
+) noexcept {
+    const auto set_error = [](cudaError_t result, const char * expression) {
+        return std::string { "'" } + expression + "' failed: " +
+            cudaGetErrorString(result);
+    };
+
+    struct GraphGuard {
+        cudaGraph_t data {};
+
+        ~GraphGuard() noexcept {
+            if (data) {
+                cudaGraphDestroy(data);
+            }
+        }
+    } graph;
+
+    const size_t pitch = stride * sizeof(float);
+    int centers = 2 * radius + 1;
+    int source_temporal_width = 4 * radius + 1;
+    int num_planes = chroma ? 3 : 1;
+    const size_t source_rows = static_cast<size_t>(final_ ? 2 : 1) *
+        num_planes * source_temporal_width * height;
+
+    if (cudaError_t result = cudaGraphCreate(&graph.data, 0); result != cudaSuccess) {
+        return set_error(result, "cudaGraphCreate");
+    }
+
+    cudaGraphNode_t n_HtoD;
+    {
+        cudaMemcpy3DParms copy_params {};
+        copy_params.srcPtr = make_cudaPitchedPtr(
+            h_res, pitch, width, source_rows);
+        copy_params.dstPtr = make_cudaPitchedPtr(
+            d_src, pitch, width, source_rows);
+        copy_params.extent = make_cudaExtent(
+            width * sizeof(float), source_rows, 1);
+        copy_params.kind = cudaMemcpyHostToDevice;
+        if (cudaError_t result = cudaGraphAddMemcpyNode(
+            &n_HtoD, graph.data, nullptr, 0, &copy_params); result != cudaSuccess) {
+            return set_error(result, "cudaGraphAddMemcpyNode(HtoD)");
+        }
+    }
+
+    cudaGraphNode_t n_params;
+    if (cudaError_t result = cudaGraphAddMemcpyNode1D(
+        &n_params, graph.data, nullptr, 0, d_params, h_params,
+        (1 + 2 * static_cast<size_t>(centers)) * sizeof(int),
+        cudaMemcpyHostToDevice); result != cudaSuccess) {
+        return set_error(result, "cudaGraphAddMemcpyNode1D(params)");
+    }
+
+    cudaGraphNode_t n_memset;
+    {
+        cudaMemsetParams memset_params {};
+        memset_params.dst = d_res;
+        memset_params.pitch = pitch;
+        memset_params.value = 0;
+        memset_params.elementSize = 4;
+        memset_params.width = width;
+        memset_params.height = static_cast<size_t>(centers) * num_planes * 2 * height;
+        if (cudaError_t result = cudaGraphAddMemsetNode(
+            &n_memset, graph.data, nullptr, 0, &memset_params); result != cudaSuccess) {
+            return set_error(result, "cudaGraphAddMemsetNode");
+        }
+    }
+
+    std::vector<cudaGraphNode_t> center_nodes(centers);
+    for (int center = 0; center < centers; ++center) {
+        cudaGraphNode_t dependencies[] { n_HtoD, n_params, n_memset };
+        const size_t center_stride = static_cast<size_t>(num_planes) * 2 * height * stride;
+        float * center_res = d_res + center * center_stride;
+        const int * fused_params = d_params;
+        int fused_center = center;
+
+        void * kernel_args[] {
+            &center_res, &d_src,
+            &width, &height, &stride,
+            &sigma, &block_step, &bm_range,
+            &radius, &ps_num, &ps_range,
+            &sigma_u, &sigma_v, &extractor,
+            &source_temporal_width,
+            &fused_params, &fused_center
+        };
+
+        cudaKernelNodeParams kernel_params {};
+        kernel_params.func = reinterpret_cast<void *>(
+            chroma ? (final_ ? bm3d<true, true, true, true> : bm3d<true, true, false, true>)
+                   : (final_ ? bm3d<true, false, true, true> : bm3d<true, false, false, true>)
+        );
+        kernel_params.gridDim = dim3(
+            (width + (4 * block_step - 1)) / (4 * block_step),
+            (height + (block_step - 1)) / block_step);
+        kernel_params.blockDim = dim3(32);
+        kernel_params.kernelParams = kernel_args;
+
+        if (cudaError_t result = cudaGraphAddKernelNode(
+            &center_nodes[center], graph.data,
+            dependencies, std::extent_v<decltype(dependencies)>,
+            &kernel_params); result != cudaSuccess) {
+            return set_error(result, "cudaGraphAddKernelNode(center)");
+        }
+    }
+
+    cudaGraphNode_t n_normalize;
+    {
+        void * kernel_args[] {
+            &d_res, &width, &height, &stride,
+            &num_planes, &centers
+        };
+        cudaKernelNodeParams kernel_params {};
+        kernel_params.func = reinterpret_cast<void *>(temporal_normalize);
+        kernel_params.gridDim = dim3((width + 255) / 256, height, num_planes);
+        kernel_params.blockDim = dim3(256);
+        kernel_params.kernelParams = kernel_args;
+        if (cudaError_t result = cudaGraphAddKernelNode(
+            &n_normalize, graph.data,
+            center_nodes.data(), center_nodes.size(),
+            &kernel_params); result != cudaSuccess) {
+            return set_error(result, "cudaGraphAddKernelNode(normalize)");
+        }
+    }
+
+    cudaGraphNode_t dependencies[] { n_normalize };
+    for (int plane = 0; plane < num_planes; ++plane) {
+        const size_t plane_offset = static_cast<size_t>(plane) * 2 * height * pitch;
+        cudaMemcpy3DParms copy_params {};
+        copy_params.srcPtr = make_cudaPitchedPtr(
+            reinterpret_cast<char *>(d_res) + plane_offset,
+            pitch, width, 2 * height);
+        copy_params.dstPtr = make_cudaPitchedPtr(
+            reinterpret_cast<char *>(h_res) + plane_offset,
+            pitch, width, 2 * height);
+        copy_params.extent = make_cudaExtent(width * sizeof(float), height, 1);
+        copy_params.kind = cudaMemcpyDeviceToHost;
+
+        cudaGraphNode_t n_DtoH;
+        if (cudaError_t result = cudaGraphAddMemcpyNode(
+            &n_DtoH, graph.data,
+            dependencies, std::extent_v<decltype(dependencies)>,
+            &copy_params); result != cudaSuccess) {
+            return set_error(result, "cudaGraphAddMemcpyNode(DtoH)");
+        }
+    }
+
+    cudaGraphExec_t graphexec {};
+    if (cudaError_t result = cudaGraphInstantiate(
+        &graphexec, graph.data, nullptr, nullptr, 0); result != cudaSuccess) {
+        return set_error(result, "cudaGraphInstantiate");
+    }
+    return graphexec;
 }

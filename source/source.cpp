@@ -33,6 +33,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <cuda_runtime.h>
@@ -44,6 +45,16 @@ using namespace std::string_literals;
 
 extern cudaGraphExec_t get_graphexec(
     float * d_res, float * d_src, float * h_res,
+    int width, int height, int stride,
+    float sigma, int block_step, int bm_range,
+    int radius, int ps_num, int ps_range,
+    bool chroma, float sigma_u, float sigma_v,
+    bool final_, float extractor
+) noexcept;
+
+extern std::variant<cudaGraphExec_t, std::string> get_fused_graphexec(
+    float * d_res, float * d_src, float * h_res,
+    int * d_params, int * h_params,
     int width, int height, int stride,
     float sigma, int block_step, int bm_range,
     int radius, int ps_num, int ps_range,
@@ -157,9 +168,11 @@ struct BM3DData {
     bool chroma;
     bool process[3]; // sigma != 0
     bool final_;
+    bool fused;
     bool zero_init;
 
     int d_pitch;
+    size_t params_offset;
     int device_id;
 
     ticket_semaphore semaphore;
@@ -172,15 +185,12 @@ static inline void Aggregation(
     const float * VS_RESTRICT srcp, int src_stride,
     int width, int height
 ) noexcept {
-
     const float * wdst = srcp;
     const float * weight = &srcp[height * src_stride];
-
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             dstp[x] = wdst[x] / weight[x];
         }
-
         dstp += dst_stride;
         wdst += src_stride;
         weight += src_stride;
@@ -194,7 +204,7 @@ static void VS_CC BM3DInit(
 
     BM3DData * d = static_cast<BM3DData *>(*instanceData);
 
-    if (d->radius) {
+    if (d->radius && !d->fused) {
         VSVideoInfo vi = *d->vi;
         vi.height *= 2 * (2 * d->radius + 1);
         vsapi->setVideoInfo(&vi, 1, node);
@@ -211,8 +221,11 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
     auto d = static_cast<BM3DData *>(*instanceData);
 
     if (activationReason == arInitial) {
-        int start_frame = std::max(n - d->radius, 0);
-        int end_frame = std::min(n + d->radius, d->vi->numFrames - 1);
+        int64_t request_radius = d->fused ? 2LL * d->radius : d->radius;
+        int start_frame = static_cast<int>(
+            std::max<int64_t>(static_cast<int64_t>(n) - request_radius, 0));
+        int end_frame = static_cast<int>(std::min<int64_t>(
+            static_cast<int64_t>(n) + request_radius, d->vi->numFrames - 1));
 
         for (int i = start_frame; i <= end_frame; ++i) {
             vsapi->requestFrameFilter(i, d->node, frameCtx);
@@ -234,7 +247,14 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
         int radius = d->radius;
         int temporal_width = 2 * radius + 1;
         bool final_ = d->final_;
-        int num_input_frames = temporal_width * (final_ ? 2 : 1); // including ref
+        bool fused = d->fused;
+        int64_t request_radius = fused ? 2LL * radius : radius;
+        int start_frame = static_cast<int>(
+            std::max<int64_t>(static_cast<int64_t>(n) - request_radius, 0));
+        int end_frame = static_cast<int>(std::min<int64_t>(
+            static_cast<int64_t>(n) + request_radius, d->vi->numFrames - 1));
+        int input_width = fused ? end_frame - start_frame + 1 : temporal_width;
+        int num_input_frames = input_width * (final_ ? 2 : 1); // including ref
 
         using freeFrame_t = decltype(vsapi->freeFrame);
         const std::vector srcs = [&](){
@@ -243,8 +263,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             temp.reserve(num_input_frames);
 
             if (final_) {
-                for (int i = -radius; i <= radius; ++i) {
-                    int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
+                for (int i = 0; i < input_width; ++i) {
+                    int clamped_n = fused ? start_frame + i :
+                        std::clamp(n - radius + i, 0, d->vi->numFrames - 1);
                     temp.emplace_back(
                         vsapi->getFrameFilter(clamped_n, d->ref_node, frameCtx),
                         vsapi->freeFrame
@@ -252,8 +273,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 }
             }
 
-            for (int i = -radius; i <= radius; ++i) {
-                int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
+            for (int i = 0; i < input_width; ++i) {
+                int clamped_n = fused ? start_frame + i :
+                    std::clamp(n - radius + i, 0, d->vi->numFrames - 1);
                 temp.emplace_back(
                     vsapi->getFrameFilter(clamped_n, d->node, frameCtx),
                     vsapi->freeFrame
@@ -263,10 +285,11 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             return temp;
         }();
 
-        const VSFrameRef * src = srcs[radius + (final_ ? temporal_width : 0)].get();
+        int center_index = fused ? n - start_frame : radius;
+        const VSFrameRef * src = srcs[center_index + (final_ ? input_width : 0)].get();
 
         std::unique_ptr<VSFrameRef, const freeFrame_t &> dst { nullptr, vsapi->freeFrame };
-        if (radius) {
+        if (radius && !fused) {
             dst.reset(
                 vsapi->newVideoFrame(
                     d->vi->format, d->vi->width,
@@ -330,9 +353,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             float * h_src = h_res;
             for (int outer = 0; outer < (final_ ? 2 : 1); ++outer) {
                 for (int i = 0; i < std::ssize(d->process); ++i) {
-                    for (int j = 0; j < temporal_width; ++j) {
+                    for (int j = 0; j < input_width; ++j) {
                         if (i == 0 || d->process[i]) {
-                            auto current_src = srcs[j + outer * temporal_width].get();
+                            auto current_src = srcs[j + outer * input_width].get();
 
                             vs_bitblt(
                                 h_src, d_pitch,
@@ -342,6 +365,22 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         }
                         h_src += d_stride * height;
                     }
+                    if (fused) {
+                        h_src += d_stride * height * (4 * radius + 1 - input_width);
+                    }
+                }
+            }
+
+            if (fused) {
+                int * params = reinterpret_cast<int *>(
+                    reinterpret_cast<char *>(h_res) + d->params_offset);
+                params[0] = input_width;
+                for (int center = 0; center < temporal_width; ++center) {
+                    int center_frame = static_cast<int>(std::clamp<int64_t>(
+                        static_cast<int64_t>(n) - radius + center,
+                        0, d->vi->numFrames - 1));
+                    params[1 + 2 * center] = center_frame - start_frame;
+                    params[2 + 2 * center] = n - center_frame + radius;
                 }
             }
 
@@ -352,27 +391,25 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             float * h_dst = h_res;
             for (int plane = 0; plane < std::ssize(d->process); ++plane) {
                 if (!d->process[plane]) {
-                    h_dst += d_stride * height * 2 * temporal_width;
+                    h_dst += d_stride * height * 2 * (fused ? 1 : temporal_width);
                     continue;
                 }
 
                 float * dstp = reinterpret_cast<float *>(
                     vsapi->getWritePtr(dst.get(), plane));
 
-                if (radius) {
+                if (radius && !fused) {
                     vs_bitblt(
                         dstp, s_pitch, h_dst, d_pitch,
                         width_bytes, height * 2 * temporal_width
                     );
+                } else if (fused) {
+                    vs_bitblt(dstp, s_pitch, h_dst, d_pitch, width_bytes, height);
                 } else {
-                    Aggregation(
-                        dstp, s_stride,
-                        h_dst, d_stride,
-                        width, height
-                    );
+                    Aggregation(dstp, s_stride, h_dst, d_stride, width, height);
                 }
 
-                h_dst += d_stride * height * 2 * temporal_width;
+                h_dst += d_stride * height * 2 * (fused ? 1 : temporal_width);
             }
         } else { // !d->chroma
             for (int plane = 0; plane < d->vi->format->numPlanes; plane++) {
@@ -396,6 +433,22 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         width_bytes, height
                     );
                     h_src += d_stride * height;
+                    if (fused && (i + 1) % input_width == 0) {
+                        h_src += d_stride * height * (4 * radius + 1 - input_width);
+                    }
+                }
+
+                if (fused) {
+                    int * params = reinterpret_cast<int *>(
+                        reinterpret_cast<char *>(h_res) + d->params_offset);
+                    params[0] = input_width;
+                    for (int center = 0; center < temporal_width; ++center) {
+                        int center_frame = static_cast<int>(std::clamp<int64_t>(
+                            static_cast<int64_t>(n) - radius + center,
+                            0, d->vi->numFrames - 1));
+                        params[1 + 2 * center] = center_frame - start_frame;
+                        params[2 + 2 * center] = n - center_frame + radius;
+                    }
                 }
 
                 checkError(cudaGraphLaunch(graphexec, stream));
@@ -405,17 +458,15 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 float * dstp = reinterpret_cast<float *>(
                     vsapi->getWritePtr(dst.get(), plane));
 
-                if (radius) {
+                if (radius && !fused) {
                     vs_bitblt(
                         dstp, s_pitch, h_res, d_pitch,
                         width_bytes, height * 2 * temporal_width
                     );
+                } else if (fused) {
+                    vs_bitblt(dstp, s_pitch, h_res, d_pitch, width_bytes, height);
                 } else {
-                    Aggregation(
-                        dstp, s_stride,
-                        h_res, d_stride,
-                        width, height
-                    );
+                    Aggregation(dstp, s_stride, h_res, d_stride, width, height);
                 }
             }
         }
@@ -425,7 +476,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
         d->resources_lock.unlock();
         d->semaphore.release();
 
-        if (radius) {
+        if (radius && !fused) {
             VSMap * dst_prop { vsapi->getFramePropsRW(dst.get()) };
 
             vsapi->propSetInt(dst_prop, "BM3D_V_radius", d->radius, paReplace);
@@ -454,9 +505,9 @@ static void VS_CC BM3DFree(
     delete d;
 }
 
-static void VS_CC BM3DCreate(
+static void BM3DCreateImpl(
     const VSMap *in, VSMap *out, void *userData,
-    VSCore *core, const VSAPI *vsapi
+    VSCore *core, const VSAPI *vsapi, bool fused
 ) noexcept {
 
     auto d { std::make_unique<BM3DData>() };
@@ -499,6 +550,7 @@ static void VS_CC BM3DCreate(
         final_ = true;
     }
     d->final_ = final_;
+    d->fused = fused;
 
     float sigma[3];
     for (int i = 0; i < std::ssize(sigma); ++i) {
@@ -555,6 +607,9 @@ static void VS_CC BM3DCreate(
     }();
     if (radius < 0) {
         return set_error("\"radius\" must be non-negative");
+    }
+    if (fused && radius > (std::numeric_limits<int>::max() - 1) / 4) {
+        return set_error("\"radius\" is too large for fused temporal processing");
     }
     d->radius = radius;
 
@@ -642,8 +697,32 @@ static void VS_CC BM3DCreate(
         int max_width { d->process[0] ? width : width >> d->vi->format->subSamplingW };
         int max_height { d->process[0] ? height : height >> d->vi->format->subSamplingH };
 
-        int num_planes { chroma ? 3 : 1 };
-        int temporal_width = 2 * radius + 1;
+        const int num_planes { chroma ? 3 : 1 };
+        const int temporal_width = 2 * radius + 1;
+        const int source_temporal_width = fused ? 4 * radius + 1 : temporal_width;
+        if (fused) {
+            const size_t min_temporal_stride =
+                static_cast<size_t>(max_width) * max_height;
+            const size_t max_kernel_offset = std::numeric_limits<int>::max();
+            if (
+                min_temporal_stride > max_kernel_offset ||
+                static_cast<size_t>(source_temporal_width) >
+                    max_kernel_offset / min_temporal_stride ||
+                static_cast<size_t>(num_planes) > max_kernel_offset /
+                    (min_temporal_stride * source_temporal_width)) {
+                return set_error("\"radius\" is too large for the clip dimensions");
+            }
+        }
+        const size_t source_rows = static_cast<size_t>(final_ ? 2 : 1) *
+            static_cast<size_t>(num_planes) * source_temporal_width * max_height;
+        const size_t result_rows = static_cast<size_t>(num_planes) *
+            temporal_width * 2 * max_height;
+        const size_t buffer_rows = std::max(source_rows, result_rows);
+        const size_t params_size = fused ?
+            (1 + 2 * static_cast<size_t>(temporal_width)) * sizeof(int) : 0;
+        const size_t min_pitch = static_cast<size_t>(max_width) * sizeof(float);
+        const size_t params_rows = fused ?
+            (params_size + min_pitch - 1) / min_pitch : 0;
         size_t d_pitch;
         int d_stride;
         for (int i = 0; i < num_copy_engines; ++i) {
@@ -651,21 +730,38 @@ static void VS_CC BM3DCreate(
             if (i == 0) {
                 checkError(cudaMallocPitch(
                     &d_src.data, &d_pitch, max_width * sizeof(float),
-                    (final_ ? 2 : 1) * num_planes * temporal_width * max_height));
+                    fused ? buffer_rows + params_rows : source_rows));
+                if (d_pitch >
+                    static_cast<size_t>(std::numeric_limits<int>::max())) {
+                    return set_error("device pitch exceeds the supported range");
+                }
                 d_stride = static_cast<int>(d_pitch / sizeof(float));
+                if (fused) {
+                    const size_t temporal_stride =
+                        static_cast<size_t>(max_height) * d_stride;
+                    const size_t max_kernel_offset = std::numeric_limits<int>::max();
+                    if (
+                        temporal_stride > max_kernel_offset ||
+                        static_cast<size_t>(source_temporal_width) >
+                            max_kernel_offset / temporal_stride ||
+                        static_cast<size_t>(num_planes) > max_kernel_offset /
+                            (temporal_stride * source_temporal_width)) {
+                        return set_error("\"radius\" is too large for the device pitch");
+                    }
+                }
                 d->d_pitch = static_cast<int>(d_pitch);
+                d->params_offset = buffer_rows * d_pitch;
             } else {
                 checkError(cudaMalloc(&d_src.data,
-                    (final_ ? 2 : 1) * num_planes * temporal_width * max_height * d_pitch));
+                    fused ? buffer_rows * d_pitch + params_size : source_rows * d_pitch));
             }
 
             Resource<float *, cudaFree> d_res {};
-            checkError(cudaMalloc(&d_res.data,
-                num_planes * temporal_width * 2 * max_height * d_pitch));
+            checkError(cudaMalloc(&d_res.data, result_rows * d_pitch));
 
             Resource<float *, cudaFreeHost> h_res {};
             checkError(cudaMallocHost(&h_res.data,
-                num_planes * temporal_width * 2 * max_height * d_pitch));
+                buffer_rows * d_pitch + params_size));
 
             Resource<cudaStream_t, cudaStreamDestroy> stream {};
             checkError(cudaStreamCreateWithFlags(&stream.data,
@@ -673,14 +769,28 @@ static void VS_CC BM3DCreate(
 
             std::array<Resource<cudaGraphExec_t, cudaGraphExecDestroy>, 3> graphexecs {};
             if (d->chroma) {
-                graphexecs[0] = get_graphexec(
-                    d_res, d_src, h_res,
-                    width, height, d_stride,
-                    sigma[0], block_step[0], bm_range[0],
-                    radius, ps_num[0], ps_range[0],
-                    true, sigma[1], sigma[2],
-                    final_, extractor
-                );
+                if (fused) {
+                    const auto result = get_fused_graphexec(
+                        d_res, d_src, h_res,
+                        reinterpret_cast<int *>(reinterpret_cast<char *>(d_src.data) + d->params_offset),
+                        reinterpret_cast<int *>(reinterpret_cast<char *>(h_res.data) + d->params_offset),
+                        width, height, d_stride,
+                        sigma[0], block_step[0], bm_range[0],
+                        radius, ps_num[0], ps_range[0],
+                        true, sigma[1], sigma[2], final_, extractor);
+                    if (std::holds_alternative<cudaGraphExec_t>(result)) {
+                        graphexecs[0] = std::get<cudaGraphExec_t>(result);
+                    } else {
+                        return set_error(std::get<std::string>(result));
+                    }
+                } else {
+                    graphexecs[0] = get_graphexec(
+                        d_res, d_src, h_res,
+                        width, height, d_stride,
+                        sigma[0], block_step[0], bm_range[0],
+                        radius, ps_num[0], ps_range[0],
+                        true, sigma[1], sigma[2], final_, extractor);
+                }
             } else {
                 auto subsamplingW = d->vi->format->subSamplingW;
                 auto subsamplingH = d->vi->format->subSamplingH;
@@ -690,14 +800,28 @@ static void VS_CC BM3DCreate(
                         int plane_width { plane == 0 ? width : width >> subsamplingW };
                         int plane_height { plane == 0 ? height : height >> subsamplingH };
 
-                        graphexecs[plane] = get_graphexec(
-                            d_res, d_src, h_res,
-                            plane_width, plane_height, d_stride,
-                            sigma[plane], block_step[plane], bm_range[plane],
-                            radius, ps_num[plane], ps_range[plane],
-                            false, 0.0f, 0.0f,
-                            final_, extractor
-                        );
+                        if (fused) {
+                            const auto result = get_fused_graphexec(
+                                d_res, d_src, h_res,
+                                reinterpret_cast<int *>(reinterpret_cast<char *>(d_src.data) + d->params_offset),
+                                reinterpret_cast<int *>(reinterpret_cast<char *>(h_res.data) + d->params_offset),
+                                plane_width, plane_height, d_stride,
+                                sigma[plane], block_step[plane], bm_range[plane],
+                                radius, ps_num[plane], ps_range[plane],
+                                false, 0.0f, 0.0f, final_, extractor);
+                            if (std::holds_alternative<cudaGraphExec_t>(result)) {
+                                graphexecs[plane] = std::get<cudaGraphExec_t>(result);
+                            } else {
+                                return set_error(std::get<std::string>(result));
+                            }
+                        } else {
+                            graphexecs[plane] = get_graphexec(
+                                d_res, d_src, h_res,
+                                plane_width, plane_height, d_stride,
+                                sigma[plane], block_step[plane], bm_range[plane],
+                                radius, ps_num[plane], ps_range[plane],
+                                false, 0.0f, 0.0f, final_, extractor);
+                        }
                     }
                 }
             }
@@ -713,10 +837,17 @@ static void VS_CC BM3DCreate(
     }
 
     vsapi->createFilter(
-        in, out, "BM3D",
+        in, out, fused ? "BM3Dv2" : "BM3D",
         BM3DInit, BM3DGetFrame, BM3DFree,
         fmParallel, 0, d.release(), core
     );
+}
+
+static void VS_CC BM3DCreate(
+    const VSMap *in, VSMap *out, void *userData,
+    VSCore *core, const VSAPI *vsapi
+) noexcept {
+    BM3DCreateImpl(in, out, userData, core, vsapi, false);
 }
 
 struct VAggregateData {
@@ -884,17 +1015,42 @@ static void VS_CC VAggregateCreate(
 
     auto d { std::make_unique<VAggregateData>() };
 
+    const auto set_error = [&](const std::string & error_message) {
+        vsapi->setError(out, ("VAggregate: " + error_message).c_str());
+        if (d->src_node) {
+            vsapi->freeNode(d->src_node);
+        }
+        if (d->node) {
+            vsapi->freeNode(d->node);
+        }
+    };
+
     d->node = vsapi->propGetNode(in, "clip", 0, nullptr);
     auto vi = vsapi->getVideoInfo(d->node);
     d->src_node = vsapi->propGetNode(in, "src", 0, nullptr);
     d->src_vi = vsapi->getVideoInfo(d->src_node);
+
+    const int num_planes = d->src_vi->format->numPlanes;
+    if (num_planes > static_cast<int>(d->process.size())) {
+        return set_error("source clip has too many planes");
+    }
 
     d->radius = (vi->height / d->src_vi->height - 2) / 4;
 
     d->process.fill(false);
     int num_planes_args = vsapi->propNumElements(in, "planes");
     for (int i = 0; i < num_planes_args; ++i) {
-        int plane = vsapi->propGetInt(in, "planes", i, nullptr);
+        int error;
+        int plane = int64ToIntS(vsapi->propGetInt(in, "planes", i, &error));
+        if (error) {
+            return set_error("\"planes\" must contain only integers");
+        }
+        if (plane < 0 || plane >= num_planes) {
+            return set_error("\"planes\" contains an out-of-range plane index");
+        }
+        if (d->process[plane]) {
+            return set_error("\"planes\" contains a duplicate plane index");
+        }
         d->process[plane] = true;
     }
 
@@ -941,6 +1097,17 @@ static void VS_CC BM3Dv2Create(
         return ;
     }
 
+    int error;
+    int radius = int64ToIntS(vsapi->propGetInt(in, "radius", 0, &error));
+    if (error) {
+        radius = 0;
+    }
+    if (radius > 0) {
+        vsapi->freeNode(src);
+        BM3DCreateImpl(in, out, userData, core, vsapi, true);
+        return;
+    }
+
     auto plugin = vsapi->getPluginById(PLUGIN_ID, core);
     auto map = vsapi->invoke(plugin, "BM3D", in);
     if (auto error = vsapi->getError(map); error) {
@@ -950,11 +1117,6 @@ static void VS_CC BM3Dv2Create(
         return ;
     }
 
-    int error;
-    int radius = vsapi->propGetInt(in, "radius", 0, &error);
-    if (error) {
-        radius = 0;
-    }
     if (radius == 0) {
         // spatial BM3D should handle everything itself
         auto node = vsapi->propGetNode(map, "clip", 0, nullptr);

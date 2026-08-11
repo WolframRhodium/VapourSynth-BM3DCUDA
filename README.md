@@ -115,6 +115,10 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
 
 - `bm3d.VAggregate` should be called after temporal filtering, as in `VapourSynth-BM3D`. Alternatively, you may use the `BM3Dv2()` interface for both spatial and temporal denoising in one step.
 
+- For CUDA and CUDA RTC, `BM3Dv2(radius > 0)` fuses the temporal BM3D passes and final aggregation on the GPU. The public `BM3D(radius > 0)` and `VAggregate` interfaces retain their existing intermediate-frame behavior.
+
+- `VAggregate(planes=...)` accepts each plane at most once. Plane indices must be non-negative and smaller than the number of planes in `src`.
+
 - The `_rtc` version has three additional experimental parameters:
 
     - bm_error_s: (string)
@@ -149,6 +153,10 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
 GPU memory consumptions:
 
 `(ref ? 4 : 3) * (chroma ? 3 : 1) * (fast ? 4 : 1) * (2 * radius + 1) * size_of_a_single_frame`
+
+For the fused CUDA/RTC `BM3Dv2(radius > 0)` path:
+
+`(max((ref ? 2 : 1) * (4 * radius + 1), 2 * (2 * radius + 1)) + 2 * (2 * radius + 1)) * (chroma ? 3 : 1) * (fast ? 4 : 1) * size_of_a_single_frame`
 
 ## Compilation
 - The CMake configuration of `BM3DCUDA_RTC` links to NVRTC static library by default, which requires CUDA 11.5 or later.
