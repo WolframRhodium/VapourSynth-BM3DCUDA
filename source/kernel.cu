@@ -65,6 +65,18 @@ std::variant<cudaGraphExec_t, std::string> get_fused_graphexec(
     bool final_, float extractor
 ) noexcept;
 
+std::variant<cudaGraphExec_t, std::string> get_rolling_graphexec(
+    float * d_accum, float * d_scratch, float * d_src,
+    float * h_src, float * h_output,
+    int * d_params, int * h_params,
+    int width, int height, int stride,
+    const float sigma[3], const int block_step[3],
+    const int bm_range[3], const int ps_num[3], const int ps_range[3],
+    int radius, int chunk_size, int process_mask, int video_planes,
+    int subsampling_w, int subsampling_h,
+    bool chroma, bool final_, float extractor
+) noexcept;
+
 static constexpr int smem_stride = 32 + 1;
 
 extern "C" __global__ void temporal_normalize(
@@ -91,6 +103,62 @@ extern "C" __global__ void temporal_normalize(
     }
 
     res[plane * plane_stride + y * stride + x] = __fdiv_rn(weighted_sum, weight);
+}
+
+extern "C" __global__ void rolling_scatter(
+    float * __restrict__ accum,
+    const float * __restrict__ scratch,
+    const int * __restrict__ params,
+    int width, int height, int stride,
+    int num_planes, int radius, int chunk_size, int center
+) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y;
+    const int plane = blockIdx.z;
+    if (x >= width || y >= height || plane >= num_planes) {
+        return;
+    }
+
+    const int temporal_width = 2 * radius + 1;
+    const int source_center = params[1 + center];
+    const int first_output = max(0, center - 2 * radius);
+    const int last_output = min(chunk_size - 1, center);
+    const size_t image_stride = static_cast<size_t>(height) * stride;
+
+    for (int output = first_output; output <= last_output; ++output) {
+        const int slice = min(max(
+            output + 3 * radius - source_center, 0), temporal_width - 1);
+        const size_t scratch_offset =
+            (static_cast<size_t>(plane) * temporal_width + slice) *
+                2 * image_stride +
+            static_cast<size_t>(y) * stride + x;
+        const size_t accum_offset =
+            (static_cast<size_t>(output) * num_planes + plane) *
+                2 * image_stride +
+            static_cast<size_t>(y) * stride + x;
+
+        accum[accum_offset] += scratch[scratch_offset];
+        accum[accum_offset + image_stride] +=
+            scratch[scratch_offset + image_stride];
+    }
+}
+
+extern "C" __global__ void rolling_normalize(
+    float * __restrict__ accum,
+    int width, int height, int stride,
+    int num_planes, int outputs
+) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y;
+    const int output_plane = blockIdx.z;
+    if (x >= width || y >= height || output_plane >= outputs * num_planes) {
+        return;
+    }
+
+    const size_t image_stride = static_cast<size_t>(height) * stride;
+    const size_t offset = static_cast<size_t>(output_plane) *
+        2 * image_stride + static_cast<size_t>(y) * stride + x;
+    accum[offset] = __fdiv_rn(accum[offset], accum[offset + image_stride]);
 }
 
 template <auto transform_impl, int stride=256, int howmany=8, int howmany_stride=32>
@@ -402,7 +470,10 @@ static inline float collaborative_wiener(
 }
 
 // BM3D kernel
-template <bool temporal=false, bool chroma=false, bool final_=false, bool fused=false>
+template <
+    bool temporal=false, bool chroma=false, bool final_=false,
+    bool fused=false, bool rolling=false
+>
 __global__
 #if __CUDA_ARCH__ == 750 || __CUDA_ARCH__ == 860
 __launch_bounds__(32, 16)
@@ -423,7 +494,7 @@ static void bm3d(
     float extractor, // used for deteriministic summation
     int source_temporal_width,
     const int * __restrict__ fused_params,
-    int fused_center
+    int graph_center
 ) {
 
     __shared__ float buffer[8 * smem_stride];
@@ -453,10 +524,14 @@ static void bm3d(
     int output_z = -1;
     if constexpr (fused) {
         source_valid_width = fused_params[0];
-        source_center = fused_params[1 + 2 * fused_center];
-        output_z = fused_params[2 + 2 * fused_center];
+        source_center = fused_params[1 + 2 * graph_center];
+        output_z = fused_params[2 + 2 * graph_center];
+    } else if constexpr (rolling) {
+        source_valid_width = fused_params[0];
+        source_center = fused_params[1 + graph_center];
     }
-    int source_plane_stride = (fused ? source_temporal_width : temporal_width) * temporal_stride;
+    int source_plane_stride = ((fused || rolling) ?
+        source_temporal_width : temporal_width) * temporal_stride;
     int result_plane_stride = (fused ? 1 : temporal_width) * temporal_stride;
     int clip_stride = (chroma ? 3 : 1) * source_plane_stride;
 
@@ -572,7 +647,7 @@ static void bm3d(
                 int frame_index8_y = 0;
 
                 int source_index = temporal_index;
-                if constexpr (fused) {
+                if constexpr (fused || rolling) {
                     source_index = min(max(
                         source_center - radius + temporal_index, 0),
                         source_valid_width - 1);
@@ -736,7 +811,7 @@ static void bm3d(
                 if constexpr (temporal) {
                     int tmp_z = __shfl_sync(0xFFFFFFFF, index8_z, i, 8);
                     int source_index = tmp_z;
-                    if constexpr (fused) {
+                    if constexpr (fused || rolling) {
                         source_index = min(max(
                             source_center - radius + tmp_z, 0),
                             source_valid_width - 1);
@@ -764,7 +839,7 @@ static void bm3d(
                 if constexpr (temporal) {
                     int tmp_z = __shfl_sync(0xFFFFFFFF, index8_z, i, 8);
                     int source_index = tmp_z;
-                    if constexpr (fused) {
+                    if constexpr (fused || rolling) {
                         source_index = min(max(
                             source_center - radius + tmp_z, 0),
                             source_valid_width - 1);
@@ -1090,6 +1165,277 @@ std::variant<cudaGraphExec_t, std::string> get_fused_graphexec(
             dependencies, std::extent_v<decltype(dependencies)>,
             &copy_params); result != cudaSuccess) {
             return set_error(result, "cudaGraphAddMemcpyNode(DtoH)");
+        }
+    }
+
+    cudaGraphExec_t graphexec {};
+    if (cudaError_t result = cudaGraphInstantiate(
+        &graphexec, graph.data, nullptr, nullptr, 0); result != cudaSuccess) {
+        return set_error(result, "cudaGraphInstantiate");
+    }
+    return graphexec;
+}
+
+std::variant<cudaGraphExec_t, std::string> get_rolling_graphexec(
+    float * d_accum, float * d_scratch, float * d_src,
+    float * h_src, float * h_output,
+    int * d_params, int * h_params,
+    int width, int height, int stride,
+    const float sigma[3], const int block_step[3],
+    const int bm_range[3], const int ps_num[3], const int ps_range[3],
+    int radius, int chunk_size, int process_mask, int video_planes,
+    int subsampling_w, int subsampling_h,
+    bool chroma, bool final_, float extractor
+) noexcept {
+    const auto set_error = [](cudaError_t result, const char * expression) {
+        return std::string { "'" } + expression + "' failed: " +
+            cudaGetErrorString(result);
+    };
+
+    struct GraphGuard {
+        cudaGraph_t data {};
+
+        ~GraphGuard() noexcept {
+            if (data) {
+                cudaGraphDestroy(data);
+            }
+        }
+    } graph;
+
+    struct Group {
+        int first_plane;
+        int planes;
+        int width;
+        int height;
+        size_t source_row;
+        size_t accum_row;
+    };
+
+    const int temporal_width = 2 * radius + 1;
+    const int source_width = chunk_size + 4 * radius;
+    const int centers = chunk_size + 2 * radius;
+    const int clips = final_ ? 2 : 1;
+    const int copy_width = (process_mask & 1) ?
+        width : width >> subsampling_w;
+    const size_t pitch = static_cast<size_t>(stride) * sizeof(float);
+
+    std::vector<Group> groups;
+    size_t source_rows = 0;
+    size_t accum_rows = 0;
+    if (chroma) {
+        groups.push_back(Group {
+            .first_plane = 0,
+            .planes = 3,
+            .width = width,
+            .height = height,
+            .source_row = 0,
+            .accum_row = 0
+        });
+        source_rows = static_cast<size_t>(clips) * 3 * source_width * height;
+        accum_rows = static_cast<size_t>(chunk_size) * 3 * 2 * height;
+    } else {
+        for (int plane = 0; plane < video_planes; ++plane) {
+            if (!(process_mask & (1 << plane))) {
+                continue;
+            }
+            const int plane_width = plane ? width >> subsampling_w : width;
+            const int plane_height = plane ? height >> subsampling_h : height;
+            groups.push_back(Group {
+                .first_plane = plane,
+                .planes = 1,
+                .width = plane_width,
+                .height = plane_height,
+                .source_row = source_rows,
+                .accum_row = accum_rows
+            });
+            source_rows += static_cast<size_t>(clips) * source_width * plane_height;
+            accum_rows += static_cast<size_t>(chunk_size) * 2 * plane_height;
+        }
+    }
+
+    if (cudaError_t result = cudaGraphCreate(&graph.data, 0); result != cudaSuccess) {
+        return set_error(result, "cudaGraphCreate");
+    }
+
+    cudaGraphNode_t source_copy;
+    {
+        cudaMemcpy3DParms copy_params {};
+        copy_params.srcPtr = make_cudaPitchedPtr(
+            h_src, pitch, copy_width, source_rows);
+        copy_params.dstPtr = make_cudaPitchedPtr(
+            d_src, pitch, copy_width, source_rows);
+        copy_params.extent = make_cudaExtent(
+            static_cast<size_t>(copy_width) * sizeof(float), source_rows, 1);
+        copy_params.kind = cudaMemcpyHostToDevice;
+        if (cudaError_t result = cudaGraphAddMemcpyNode(
+            &source_copy, graph.data, nullptr, 0, &copy_params);
+            result != cudaSuccess) {
+            return set_error(result, "cudaGraphAddMemcpyNode(source HtoD)");
+        }
+    }
+
+    cudaGraphNode_t params_copy;
+    if (cudaError_t result = cudaGraphAddMemcpyNode1D(
+        &params_copy, graph.data, nullptr, 0, d_params, h_params,
+        (1 + static_cast<size_t>(centers)) * sizeof(int),
+        cudaMemcpyHostToDevice); result != cudaSuccess) {
+        return set_error(result, "cudaGraphAddMemcpyNode1D(params)");
+    }
+
+    cudaGraphNode_t accum_clear;
+    {
+        cudaMemsetParams memset_params {};
+        memset_params.dst = d_accum;
+        memset_params.pitch = pitch;
+        memset_params.value = 0;
+        memset_params.elementSize = 4;
+        memset_params.width = copy_width;
+        memset_params.height = accum_rows;
+        if (cudaError_t result = cudaGraphAddMemsetNode(
+            &accum_clear, graph.data, nullptr, 0, &memset_params);
+            result != cudaSuccess) {
+            return set_error(result, "cudaGraphAddMemsetNode(accumulators)");
+        }
+    }
+
+    cudaGraphNode_t previous_group {};
+    for (const Group & group : groups) {
+        cudaGraphNode_t previous = previous_group;
+        for (int center = 0; center < centers; ++center) {
+            cudaGraphNode_t scratch_clear;
+            cudaGraphNode_t initial_dependencies[] {
+                source_copy, params_copy, accum_clear
+            };
+            const cudaGraphNode_t * dependencies = previous ?
+                &previous : initial_dependencies;
+            const size_t dependency_count = previous ? 1 :
+                std::extent_v<decltype(initial_dependencies)>;
+
+            cudaMemsetParams memset_params {};
+            memset_params.dst = d_scratch;
+            memset_params.pitch = pitch;
+            memset_params.value = 0;
+            memset_params.elementSize = 4;
+            memset_params.width = group.width;
+            memset_params.height = static_cast<size_t>(group.planes) *
+                temporal_width * 2 * group.height;
+            if (cudaError_t result = cudaGraphAddMemsetNode(
+                &scratch_clear, graph.data, dependencies, dependency_count,
+                &memset_params); result != cudaSuccess) {
+                return set_error(result, "cudaGraphAddMemsetNode(scratch)");
+            }
+
+            cudaGraphNode_t center_node;
+            float * center_source = d_src + group.source_row * stride;
+            const int plane = group.first_plane;
+            float center_sigma = sigma[plane];
+            float sigma_u = chroma ? sigma[1] : 0.0f;
+            float sigma_v = chroma ? sigma[2] : 0.0f;
+            int center_block_step = block_step[plane];
+            int center_bm_range = bm_range[plane];
+            int center_ps_num = ps_num[plane];
+            int center_ps_range = ps_range[plane];
+            const int * params = d_params;
+
+            void * kernel_args[] {
+                &d_scratch, &center_source,
+                const_cast<int *>(&group.width),
+                const_cast<int *>(&group.height), &stride,
+                &center_sigma, &center_block_step, &center_bm_range,
+                &radius, &center_ps_num, &center_ps_range,
+                &sigma_u, &sigma_v, &extractor,
+                const_cast<int *>(&source_width), &params, &center
+            };
+            cudaKernelNodeParams kernel_params {};
+            kernel_params.func = reinterpret_cast<void *>(
+                chroma ?
+                    (final_ ? bm3d<true, true, true, false, true> :
+                              bm3d<true, true, false, false, true>) :
+                    (final_ ? bm3d<true, false, true, false, true> :
+                              bm3d<true, false, false, false, true>)
+            );
+            kernel_params.gridDim = dim3(
+                (group.width + (4 * center_block_step - 1)) /
+                    (4 * center_block_step),
+                (group.height + (center_block_step - 1)) /
+                    center_block_step);
+            kernel_params.blockDim = dim3(32);
+            kernel_params.kernelParams = kernel_args;
+            if (cudaError_t result = cudaGraphAddKernelNode(
+                &center_node, graph.data, &scratch_clear, 1,
+                &kernel_params); result != cudaSuccess) {
+                return set_error(result, "cudaGraphAddKernelNode(center)");
+            }
+
+            cudaGraphNode_t scatter_node;
+            float * group_accum = d_accum + group.accum_row * stride;
+            void * scatter_args[] {
+                &group_accum, &d_scratch, &d_params,
+                const_cast<int *>(&group.width),
+                const_cast<int *>(&group.height), &stride,
+                const_cast<int *>(&group.planes), &radius, &chunk_size, &center
+            };
+            cudaKernelNodeParams scatter_params {};
+            scatter_params.func = reinterpret_cast<void *>(rolling_scatter);
+            scatter_params.gridDim = dim3(
+                (group.width + 255) / 256, group.height, group.planes);
+            scatter_params.blockDim = dim3(256);
+            scatter_params.kernelParams = scatter_args;
+            if (cudaError_t result = cudaGraphAddKernelNode(
+                &scatter_node, graph.data, &center_node, 1,
+                &scatter_params); result != cudaSuccess) {
+                return set_error(result, "cudaGraphAddKernelNode(scatter)");
+            }
+            previous = scatter_node;
+        }
+
+        cudaGraphNode_t normalize_node;
+        float * group_accum = d_accum + group.accum_row * stride;
+        void * normalize_args[] {
+            &group_accum,
+            const_cast<int *>(&group.width),
+            const_cast<int *>(&group.height), &stride,
+            const_cast<int *>(&group.planes), &chunk_size
+        };
+        cudaKernelNodeParams normalize_params {};
+        normalize_params.func = reinterpret_cast<void *>(rolling_normalize);
+        normalize_params.gridDim = dim3(
+            (group.width + 255) / 256, group.height,
+            chunk_size * group.planes);
+        normalize_params.blockDim = dim3(256);
+        normalize_params.kernelParams = normalize_args;
+        if (cudaError_t result = cudaGraphAddKernelNode(
+            &normalize_node, graph.data, &previous, 1,
+            &normalize_params); result != cudaSuccess) {
+            return set_error(result, "cudaGraphAddKernelNode(normalize)");
+        }
+        previous_group = normalize_node;
+
+        for (int output = 0; output < chunk_size; ++output) {
+            for (int group_plane = 0; group_plane < group.planes; ++group_plane) {
+                const int video_plane = group.first_plane + group_plane;
+                if (!(process_mask & (1 << video_plane))) {
+                    continue;
+                }
+                const size_t row = group.accum_row +
+                    (static_cast<size_t>(output) * group.planes + group_plane) *
+                        2 * group.height;
+                cudaMemcpy3DParms copy_params {};
+                copy_params.srcPtr = make_cudaPitchedPtr(
+                    d_accum + row * stride, pitch, group.width, group.height);
+                copy_params.dstPtr = make_cudaPitchedPtr(
+                    h_output + row * stride, pitch, group.width, group.height);
+                copy_params.extent = make_cudaExtent(
+                    static_cast<size_t>(group.width) * sizeof(float),
+                    group.height, 1);
+                copy_params.kind = cudaMemcpyDeviceToHost;
+                cudaGraphNode_t output_copy;
+                if (cudaError_t result = cudaGraphAddMemcpyNode(
+                    &output_copy, graph.data, &normalize_node, 1,
+                    &copy_params); result != cudaSuccess) {
+                    return set_error(result, "cudaGraphAddMemcpyNode(output DtoH)");
+                }
+            }
         }
     }
 
