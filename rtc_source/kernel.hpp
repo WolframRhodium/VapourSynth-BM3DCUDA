@@ -63,7 +63,7 @@ external variables:
     float sigma, int block_step, int bm_range,
     int _radius, int ps_num, int ps_range,
     float sigma_u, float sigma_v,
-    bool temporal, bool chroma, bool final_, bool fused
+    bool temporal, bool chroma, bool final_, bool fused, bool rolling
     float FLT_MAX, float FLT_EPSILON,
     float extractor,
     __device__ static inline float bm_error(const float *, const float *)
@@ -734,8 +734,11 @@ void bm3d(
         source_valid_width = fused_params[0];
         source_center = fused_params[1 + 2 * fused_center];
         output_z = fused_params[2 + 2 * fused_center];
+    } else if constexpr (rolling) {
+        source_valid_width = fused_params[0];
+        source_center = fused_params[1 + fused_center];
     }
-    int source_plane_stride = (fused ? source_temporal_width : temporal_width) * temporal_stride;
+    int source_plane_stride = ((fused || rolling) ? source_temporal_width : temporal_width) * temporal_stride;
     int result_plane_stride = (fused ? 1 : temporal_width) * temporal_stride;
     int clip_stride = (chroma ? 3 : 1) * source_plane_stride;
 
@@ -844,7 +847,7 @@ void bm3d(
                 int frame_index8_y = 0;
 
                 int source_index = temporal_index;
-                if constexpr (fused) {
+                if constexpr (fused || rolling) {
                     source_index = min(max(
                         source_center - radius + temporal_index, 0),
                         source_valid_width - 1);
@@ -1004,7 +1007,7 @@ void bm3d(
                 if constexpr (temporal) {
                     int tmp_z = __shfl_sync(0xFFFFFFFF, index8_z, i, 8);
                     int source_index = tmp_z;
-                    if constexpr (fused) {
+                    if constexpr (fused || rolling) {
                         source_index = min(max(
                             source_center - radius + tmp_z, 0),
                             source_valid_width - 1);
@@ -1032,7 +1035,7 @@ void bm3d(
                 if constexpr (temporal) {
                     int tmp_z = __shfl_sync(0xFFFFFFFF, index8_z, i, 8);
                     int source_index = tmp_z;
-                    if constexpr (fused) {
+                    if constexpr (fused || rolling) {
                         source_index = min(max(
                             source_center - radius + tmp_z, 0),
                             source_valid_width - 1);
@@ -1125,5 +1128,51 @@ extern "C" __global__ void temporal_normalize(
 
     res[plane * plane_stride + y * normalize_stride + x] =
         __fdiv_rn(weighted_sum, weight);
+}
+
+extern "C" __global__ void rolling_scatter(
+    float * __restrict__ accum,
+    const float * __restrict__ scratch,
+    const int * __restrict__ params,
+    int width, int height, int stride,
+    int num_planes, int radius, int chunk_size, int center
+) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y;
+    const int plane = blockIdx.z;
+    if (x >= width || y >= height || plane >= num_planes) return;
+
+    const int temporal_width = 2 * radius + 1;
+    const int source_center = params[1 + center];
+    const int first_output = max(0, center - 2 * radius);
+    const int last_output = min(chunk_size - 1, center);
+    const size_t image_stride = static_cast<size_t>(height) * stride;
+    for (int output = first_output; output <= last_output; ++output) {
+        const int slice = min(max(output + 3 * radius - source_center, 0), temporal_width - 1);
+        const size_t scratch_offset =
+            (static_cast<size_t>(plane) * temporal_width + slice) * 2 * image_stride +
+            static_cast<size_t>(y) * stride + x;
+        const size_t accum_offset =
+            (static_cast<size_t>(output) * num_planes + plane) * 2 * image_stride +
+            static_cast<size_t>(y) * stride + x;
+        accum[accum_offset] += scratch[scratch_offset];
+        accum[accum_offset + image_stride] += scratch[scratch_offset + image_stride];
+    }
+}
+
+extern "C" __global__ void rolling_normalize(
+    float * __restrict__ accum,
+    int width, int height, int stride,
+    int num_planes, int outputs
+) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y;
+    const int output_plane = blockIdx.z;
+    if (x >= width || y >= height || output_plane >= outputs * num_planes) return;
+
+    const size_t image_stride = static_cast<size_t>(height) * stride;
+    const size_t offset = static_cast<size_t>(output_plane) * 2 * image_stride +
+        static_cast<size_t>(y) * stride + x;
+    accum[offset] = __fdiv_rn(accum[offset], accum[offset + image_stride]);
 }
 )""";

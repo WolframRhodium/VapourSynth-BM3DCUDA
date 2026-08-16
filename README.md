@@ -30,10 +30,10 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
 {bm3dcuda, bm3dcuda_rtc, bm3dcpu}.BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_step=8, int[] bm_range=9, int radius=0, int[] ps_num=2, int[] ps_range=4, bint chroma=False, int device_id=0, bool fast=True, int extractor_exp=0])
 ```
 
-Static CUDA also provides execution selection on `BM3Dv2`:
+CUDA and CUDA RTC provide execution selection on `BM3Dv2`:
 
 ```python3
-bm3dcuda.BM3Dv2(clip[, ..., temporal_mode="fused", rolling_chunk=16])
+{bm3dcuda, bm3dcuda_rtc}.BM3Dv2(clip[, ..., temporal_mode="fused", rolling_chunk=16])
 ```
 
 - clip:
@@ -117,17 +117,13 @@ bm3dcuda.BM3Dv2(clip[, ..., temporal_mode="fused", rolling_chunk=16])
 
     Default `0`. (non-determinism)
 
-- temporal_mode, rolling_chunk: (static CUDA `BM3Dv2` only)
+- temporal_mode, rolling_chunk:
 
     `temporal_mode` selects temporal execution for `radius > 0`. `"fused"`
     is the default and retains the existing fused CUDA path. `"legacy"`
     composes public `BM3D` and `VAggregate`. `"rolling"` uses one CUDA
     stream and one resource set to build aligned output chunks; `fast` is
     accepted in this mode for API compatibility but has no effect.
-
-    This experimental rolling mode is implemented only by the static
-    `bm3dcuda` plugin. The `bm3dcuda_rtc` plugin does not accept these two
-    options and continues to use its existing temporal implementation.
 
     `rolling_chunk` sets the rolling chunk size in the range `[1, 64]` and
     defaults to `16`. It may only be supplied with `temporal_mode="rolling"`.
@@ -141,7 +137,7 @@ bm3dcuda.BM3Dv2(clip[, ..., temporal_mode="fused", rolling_chunk=16])
   final GPU aggregation by default. The public `BM3D(radius > 0)` and
   `VAggregate` interfaces retain their existing intermediate-frame behavior.
 
-- Static CUDA rolling chunks are aligned by
+- CUDA rolling chunks are aligned by
   `floor(frame / rolling_chunk) * rolling_chunk`. The filter retains one
   completed chunk of final VapourSynth frames. Requests inside that chunk are
   cache hits; a request outside it recomputes and replaces the aligned chunk,
@@ -154,6 +150,12 @@ bm3dcuda.BM3Dv2(clip[, ..., temporal_mode="fused", rolling_chunk=16])
   normalized output frames to the host. Larger chunks amortize halo work but
   increase GPU accumulators, pinned staging memory, retained frame memory, and
   latency for a random-access miss.
+
+- RTC rolling uses one device resource, one stream, and one Driver API graph.
+  A completed chunk is retained in a frame cache; cache misses stage the
+  source/reference halo, serialize graph execution, and replace the cache.
+  `fast` is accepted for API compatibility but does not change rolling's
+  resource count. Partial final chunks cache only valid output frames.
 
 - `VAggregate(planes=...)` accepts each plane at most once. Plane indices must be non-negative and smaller than the number of planes in `src`.
 
@@ -196,7 +198,7 @@ For the fused CUDA/RTC `BM3Dv2(radius > 0)` path:
 
 `(max((ref ? 2 : 1) * (4 * radius + 1), 2 * (2 * radius + 1)) + 2 * (2 * radius + 1)) * (chroma ? 3 : 1) * (fast ? 4 : 1) * size_of_a_single_frame`
 
-For the rolling static CUDA `BM3Dv2(radius > 0)` path, one stream holds a
+For the rolling CUDA `BM3Dv2(radius > 0)` path, one stream holds a
 source slab, one `2 * radius + 1`-slice scratch result, and
 `rolling_chunk` weighted accumulators. Pinned host memory holds the source slab
 and normalized chunk outputs. The filter additionally retains one chunk of
