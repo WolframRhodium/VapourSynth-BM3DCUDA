@@ -1577,17 +1577,42 @@ static void VS_CC VAggregateCreate(
 
     auto d { std::make_unique<VAggregateData>() };
 
+    const auto set_error = [&](const std::string & error_message) {
+        vsapi->setError(out, ("VAggregate: " + error_message).c_str());
+        if (d->src_node) {
+            vsapi->freeNode(d->src_node);
+        }
+        if (d->node) {
+            vsapi->freeNode(d->node);
+        }
+    };
+
     d->node = vsapi->propGetNode(in, "clip", 0, nullptr);
     auto vi = vsapi->getVideoInfo(d->node);
     d->src_node = vsapi->propGetNode(in, "src", 0, nullptr);
     d->src_vi = vsapi->getVideoInfo(d->src_node);
+
+    const int num_planes = d->src_vi->format->numPlanes;
+    if (num_planes > static_cast<int>(d->process.size())) {
+        return set_error("source clip has too many planes");
+    }
 
     d->radius = (vi->height / d->src_vi->height - 2) / 4;
 
     d->process.fill(false);
     int num_planes_args = vsapi->propNumElements(in, "planes");
     for (int i = 0; i < num_planes_args; ++i) {
-        int plane = vsapi->propGetInt(in, "planes", i, nullptr);
+        int error;
+        int plane = int64ToIntS(vsapi->propGetInt(in, "planes", i, &error));
+        if (error) {
+            return set_error("\"planes\" must contain only integers");
+        }
+        if (plane < 0 || plane >= num_planes) {
+            return set_error("\"planes\" contains an out-of-range plane index");
+        }
+        if (d->process[plane]) {
+            return set_error("\"planes\" contains a duplicate plane index");
+        }
         d->process[plane] = true;
     }
 
