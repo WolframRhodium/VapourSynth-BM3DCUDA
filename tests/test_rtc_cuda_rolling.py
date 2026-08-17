@@ -23,8 +23,8 @@ def patterned_clip(format_id: int, length: int = 11) -> vs.VideoNode:
         width=32, height=24, format=format_id, length=length
     )
 
-    def fill(n: int, frame: vs.VideoFrame) -> vs.VideoFrame:
-        output = frame.copy()
+    def fill(n: int, f: vs.VideoFrame) -> vs.VideoFrame:
+        output = f.copy()
         for plane in range(output.format.num_planes):
             array = np.asarray(output[plane])
             y, x = np.indices(array.shape)
@@ -54,10 +54,13 @@ def assert_frames_equal(left: vs.VideoNode, right: vs.VideoNode, order) -> None:
     "arguments",
     [
         {"temporal_mode": "invalid", "radius": 1},
-        {"temporal_mode": "fused", "radius": 1, "rolling_chunk": 4},
+        {"temporal_mode": "fused", "radius": 1},
         {"temporal_mode": "legacy", "radius": 1, "rolling_chunk": 4},
+        {"temporal_mode": "legacy", "radius": 1, "rolling_cache_chunks": 2},
         {"temporal_mode": "rolling", "radius": 1, "rolling_chunk": 0},
         {"temporal_mode": "rolling", "radius": 1, "rolling_chunk": 65},
+        {"temporal_mode": "rolling", "radius": 1, "rolling_cache_chunks": 0},
+        {"temporal_mode": "rolling", "radius": 1, "rolling_cache_chunks": 65},
         {"temporal_mode": "rolling", "radius": 0},
     ],
 )
@@ -67,12 +70,37 @@ def test_selector_rejects_invalid_combinations(arguments) -> None:
         bm3dcuda.BM3Dv2(source, **arguments)
 
 
-def test_default_is_explicit_fused() -> None:
+def test_default_is_explicit_rolling() -> None:
     source = patterned_clip(vs.GRAYS)
     arguments = {"radius": 2, "extractor_exp": 3, "fast": False}
     implicit = bm3dcuda.BM3Dv2(source, **arguments)
-    explicit = bm3dcuda.BM3Dv2(source, temporal_mode="fused", **arguments)
+    explicit = bm3dcuda.BM3Dv2(source, temporal_mode="rolling", **arguments)
     assert_frames_equal(implicit, explicit, (0, 5, 10))
+
+
+def test_default_radius_zero_uses_spatial_bm3d() -> None:
+    source = patterned_clip(vs.GRAYS, 3)
+    implicit = bm3dcuda.BM3Dv2(source, radius=0, fast=False, extractor_exp=6)
+    explicit = bm3dcuda.BM3D(source, radius=0, fast=False, extractor_exp=6)
+    assert_frames_equal(implicit, explicit, range(3))
+
+
+def test_final_frame_of_int_max_length_clip() -> None:
+    source = core.std.BlankClip(
+        width=8,
+        height=8,
+        format=vs.GRAYS,
+        length=np.iinfo(np.int32).max,
+    )
+    rolling = bm3dcuda.BM3Dv2(
+        source,
+        radius=1,
+        temporal_mode="rolling",
+        rolling_chunk=4,
+        fast=False,
+    )
+    frame = rolling.get_frame(rolling.num_frames - 1)
+    assert frame.width == 8
 
 
 @pytest.mark.parametrize("radius", [1, 2, 3, 4])
@@ -130,6 +158,26 @@ def test_reference_custom_parameters_and_unprocessed_planes() -> None:
             )
 
 
+def test_multi_chunk_cache_matches_legacy_on_random_access() -> None:
+    source = patterned_clip(vs.GRAYS, 17)
+    arguments = {
+        "radius": 2,
+        "extractor_exp": 6,
+        "block_step": 8,
+        "bm_range": 4,
+        "ps_range": 2,
+    }
+    legacy = bm3dcuda.BM3Dv2(source, temporal_mode="legacy", **arguments)
+    rolling = bm3dcuda.BM3Dv2(
+        source,
+        temporal_mode="rolling",
+        rolling_chunk=4,
+        rolling_cache_chunks=2,
+        **arguments,
+    )
+    assert_frames_equal(legacy, rolling, (0, 4, 8, 4, 0, 12, 8, 16, 12, 4))
+
+
 def test_zero_init_is_accepted_and_unprocessed_output_is_source() -> None:
     source = patterned_clip(vs.YUV444PS, 5)
     rolling = bm3dcuda.BM3Dv2(
@@ -159,6 +207,7 @@ def test_concurrent_requests_match_serial_output() -> None:
         "ps_range": 2,
         "temporal_mode": "rolling",
         "rolling_chunk": 4,
+        "rolling_cache_chunks": 2,
     }
     serial = bm3dcuda.BM3Dv2(source, **arguments)
     concurrent = bm3dcuda.BM3Dv2(source, **arguments)

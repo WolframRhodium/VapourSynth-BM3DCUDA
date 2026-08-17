@@ -25,8 +25,10 @@
 #include <cmath>
 #include <concepts>
 #include <cstdint>
+#include <deque>
 #include <ios>
 #include <limits>
+#include <list>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -174,14 +176,12 @@ struct BM3DData {
     bool chroma;
     bool process[3]; // sigma != 0
     bool final_;
-    bool fused;
     std::string bm_error_s[3];
     std::string transform_2d_s[3];
     std::string transform_1d_s[3];
     bool zero_init;
 
     int d_pitch;
-    size_t params_offset;
 
     CUdevice device;
     CUcontext context; // use primary context
@@ -196,13 +196,13 @@ static std::variant<CUmodule, std::string> compile(
     float sigma, int block_step, int bm_range,
     int radius, int ps_num, int ps_range,
     bool chroma, float sigma_u, float sigma_v,
-    bool final_, bool fused, bool rolling,
+    bool final_, bool rolling,
     const std::string & bm_error_s,
     const std::string & transform_2d_s,
     const std::string & transform_1d_s,
     float extractor,
     CUdevice device
-) noexcept {
+) {
 
     const auto set_error = [](const std::string & error_message) {
         return error_message;
@@ -229,7 +229,6 @@ static std::variant<CUmodule, std::string> compile(
         << "__device__ static const bool temporal = " << (radius > 0) << ";\n"
         << "__device__ static const bool chroma = " << chroma << ";\n"
         << "__device__ static const bool final_ = " << final_ << ";\n"
-        << "__device__ static const bool fused = " << fused << ";\n"
         << "__device__ static const bool rolling = " << rolling << ";\n"
         << "__device__ static const float extractor = " << extractor << ";\n"
         << "__device__ static const float FLT_MAX = "
@@ -363,12 +362,12 @@ static std::variant<CUgraphExec, std::string> get_graphexec(
     {
         CUgraphNode dependencies[] { n_HtoD, n_memset };
         int source_temporal_width = temporal_width;
-        CUdeviceptr fused_params {};
-        int fused_center = 0;
+        CUdeviceptr rolling_params {};
+        int center = 0;
 
         void * kernel_args[] {
             &d_res, &d_src,
-            &source_temporal_width, &fused_params, &fused_center
+            &source_temporal_width, &rolling_params, &center
         };
 
         CUDA_KERNEL_NODE_PARAMS node_params {
@@ -419,155 +418,6 @@ static std::variant<CUgraphExec, std::string> get_graphexec(
     return graphexec;
 }
 
-static std::variant<CUgraphExec, std::string> get_fused_graphexec(
-    CUdeviceptr d_res, CUdeviceptr d_src, float * h_res,
-    CUdeviceptr d_params, int * h_params,
-    int width, int height, int stride,
-    int block_step, int radius, bool chroma, bool final_,
-    CUcontext context, CUfunction function, CUfunction normalize_function
-) noexcept {
-    const auto set_error = [](const std::string & error_message) {
-        return error_message;
-    };
-
-    size_t pitch { stride * sizeof(float) };
-    int centers { 2 * radius + 1 };
-    int source_temporal_width { 4 * radius + 1 };
-    int num_planes { chroma ? 3 : 1 };
-    size_t source_height {
-        static_cast<size_t>(final_ ? 2 : 1) * num_planes *
-            source_temporal_width * height
-    };
-
-    CUgraph graph_;
-    checkError(cuGraphCreate(&graph_, 0));
-    Resource<CUgraph, cuGraphDestroy> graph { graph_ };
-
-    CUgraphNode n_HtoD;
-    CUDA_MEMCPY3D source_copy {
-        .srcMemoryType = CU_MEMORYTYPE_HOST,
-        .srcHost = h_res,
-        .srcPitch = pitch,
-        .dstMemoryType = CU_MEMORYTYPE_DEVICE,
-        .dstDevice = d_src,
-        .dstPitch = pitch,
-        .WidthInBytes = static_cast<size_t>(width) * sizeof(float),
-        .Height = source_height,
-        .Depth = 1,
-    };
-    checkError(cuGraphAddMemcpyNode(
-        &n_HtoD, graph, nullptr, 0, &source_copy, context));
-
-    CUgraphNode n_params;
-    const size_t params_size =
-        (1 + 2 * static_cast<size_t>(centers)) * sizeof(int);
-    CUDA_MEMCPY3D params_copy {
-        .srcMemoryType = CU_MEMORYTYPE_HOST,
-        .srcHost = h_params,
-        .srcPitch = params_size,
-        .dstMemoryType = CU_MEMORYTYPE_DEVICE,
-        .dstDevice = d_params,
-        .dstPitch = params_size,
-        .WidthInBytes = params_size,
-        .Height = 1,
-        .Depth = 1,
-    };
-    checkError(cuGraphAddMemcpyNode(
-        &n_params, graph, nullptr, 0, &params_copy, context));
-
-    CUgraphNode n_memset;
-    CUDA_MEMSET_NODE_PARAMS memset_params {
-        .dst = d_res,
-        .pitch = pitch,
-        .value = 0,
-        .elementSize = 4,
-        .width = static_cast<size_t>(width),
-        .height = static_cast<size_t>(centers) * num_planes * 2 * height,
-    };
-    checkError(cuGraphAddMemsetNode(
-        &n_memset, graph, nullptr, 0, &memset_params, context));
-
-    std::vector<CUgraphNode> center_nodes(centers);
-    const size_t center_stride = static_cast<size_t>(num_planes) * 2 * height * pitch;
-    for (int center = 0; center < centers; ++center) {
-        CUgraphNode dependencies[] { n_HtoD, n_params, n_memset };
-        CUdeviceptr center_res = d_res + center * center_stride;
-        int fused_center = center;
-        void * kernel_args[] {
-            &center_res, &d_src,
-            &source_temporal_width, &d_params, &fused_center
-        };
-
-        CUDA_KERNEL_NODE_PARAMS node_params {
-            .func = function,
-            .gridDimX = static_cast<unsigned int>((width + (4 * block_step - 1)) / (4 * block_step)),
-            .gridDimY = static_cast<unsigned int>((height + (block_step - 1)) / block_step),
-            .gridDimZ = 1,
-            .blockDimX = 32,
-            .blockDimY = 1,
-            .blockDimZ = 1,
-            .sharedMemBytes = 0,
-            .kernelParams = kernel_args,
-        };
-        checkError(cuGraphAddKernelNode(
-            &center_nodes[center], graph,
-            dependencies, std::size(dependencies), &node_params));
-    }
-
-    CUgraphNode n_normalize;
-    {
-        int normalize_width = width;
-        int normalize_height = height;
-        int normalize_stride = stride;
-        void * kernel_args[] {
-            &d_res, &normalize_width, &normalize_height, &normalize_stride,
-            &num_planes, &centers
-        };
-        CUDA_KERNEL_NODE_PARAMS node_params {
-            .func = normalize_function,
-            .gridDimX = static_cast<unsigned int>((width + 255) / 256),
-            .gridDimY = static_cast<unsigned int>(height),
-            .gridDimZ = static_cast<unsigned int>(num_planes),
-            .blockDimX = 256,
-            .blockDimY = 1,
-            .blockDimZ = 1,
-            .sharedMemBytes = 0,
-            .kernelParams = kernel_args,
-        };
-        checkError(cuGraphAddKernelNode(
-            &n_normalize, graph,
-            center_nodes.data(), center_nodes.size(), &node_params));
-    }
-
-    CUgraphNode dependencies[] { n_normalize };
-    for (int plane = 0; plane < num_planes; ++plane) {
-        const size_t plane_offset = static_cast<size_t>(plane) * 2 * height * pitch;
-        CUDA_MEMCPY3D copy_params {
-            .srcMemoryType = CU_MEMORYTYPE_DEVICE,
-            .srcDevice = d_res + plane_offset,
-            .srcPitch = pitch,
-            .dstMemoryType = CU_MEMORYTYPE_HOST,
-            .dstHost = reinterpret_cast<char *>(h_res) + plane_offset,
-            .dstPitch = pitch,
-            .WidthInBytes = static_cast<size_t>(width) * sizeof(float),
-            .Height = static_cast<size_t>(height),
-            .Depth = 1,
-        };
-        CUgraphNode n_DtoH;
-        checkError(cuGraphAddMemcpyNode(
-            &n_DtoH, graph,
-            dependencies, std::size(dependencies), &copy_params, context));
-    }
-
-    CUgraphExec graphexec;
-#if CUDA_VERSION >= 12000
-    checkError(cuGraphInstantiate(&graphexec, graph, 0));
-#else
-    checkError(cuGraphInstantiate(&graphexec, graph, nullptr, nullptr, 0));
-#endif
-    return graphexec;
-}
-
 struct RollingGroup {
     int first_plane;
     int planes;
@@ -595,7 +445,7 @@ static std::variant<CUgraphExec, std::string> get_rolling_graphexec(
     int process_mask, int video_planes, int subsampling_w, int subsampling_h,
     bool chroma, bool final_, float extractor, CUcontext context,
     const std::vector<RollingGroup> & groups
-) noexcept {
+) {
     const auto set_error = [](const std::string & error_message) {
         return error_message;
     };
@@ -818,7 +668,7 @@ static void VS_CC BM3DInit(
 
     BM3DData * d = static_cast<BM3DData *>(*instanceData);
 
-    if (d->radius && !d->fused) {
+    if (d->radius) {
         VSVideoInfo vi = *d->vi;
         vi.height *= 2 * (2 * d->radius + 1);
         vsapi->setVideoInfo(&vi, 1, node);
@@ -835,7 +685,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
     auto d = static_cast<BM3DData *>(*instanceData);
 
     if (activationReason == arInitial) {
-        int64_t request_radius = d->fused ? 2LL * d->radius : d->radius;
+        int64_t request_radius = d->radius;
         int start_frame = static_cast<int>(
             std::max<int64_t>(static_cast<int64_t>(n) - request_radius, 0));
         int end_frame = static_cast<int>(std::min<int64_t>(
@@ -853,13 +703,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
         int radius = d->radius;
         int temporal_width = 2 * radius + 1;
         bool final_ = d->final_;
-        bool fused = d->fused;
-        int64_t request_radius = fused ? 2LL * radius : radius;
-        int start_frame = static_cast<int>(
-            std::max<int64_t>(static_cast<int64_t>(n) - request_radius, 0));
-        int end_frame = static_cast<int>(std::min<int64_t>(
-            static_cast<int64_t>(n) + request_radius, d->vi->numFrames - 1));
-        int input_width = fused ? end_frame - start_frame + 1 : temporal_width;
+        int input_width = temporal_width;
         int num_input_frames = input_width * (final_ ? 2 : 1); // including ref
 
         using freeFrame_t = decltype(vsapi->freeFrame);
@@ -870,8 +714,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
 
             if (final_) {
                 for (int i = 0; i < input_width; ++i) {
-                    int clamped_n = fused ? start_frame + i :
-                        std::clamp(n - radius + i, 0, d->vi->numFrames - 1);
+                    int clamped_n = std::clamp(n - radius + i, 0, d->vi->numFrames - 1);
                     temp.emplace_back(
                         vsapi->getFrameFilter(clamped_n, d->ref_node, frameCtx),
                         vsapi->freeFrame
@@ -880,8 +723,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             }
 
             for (int i = 0; i < input_width; ++i) {
-                int clamped_n = fused ? start_frame + i :
-                    std::clamp(n - radius + i, 0, d->vi->numFrames - 1);
+                int clamped_n = std::clamp(n - radius + i, 0, d->vi->numFrames - 1);
                 temp.emplace_back(
                     vsapi->getFrameFilter(clamped_n, d->node, frameCtx),
                     vsapi->freeFrame
@@ -891,11 +733,11 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             return temp;
         }();
 
-        int center_index = fused ? n - start_frame : radius;
+        int center_index = radius;
         const VSFrameRef * src = srcs[center_index + (final_ ? input_width : 0)].get();
 
         std::unique_ptr<VSFrameRef, const freeFrame_t &> dst { nullptr, vsapi->freeFrame };
-        if (radius && !fused) {
+        if (radius) {
             dst.reset(
                 vsapi->newVideoFrame(
                     d->vi->format, d->vi->width,
@@ -973,22 +815,6 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         }
                         h_src += d_stride * height;
                     }
-                    if (fused) {
-                        h_src += d_stride * height * (4 * radius + 1 - input_width);
-                    }
-                }
-            }
-
-            if (fused) {
-                int * params = reinterpret_cast<int *>(
-                    reinterpret_cast<char *>(h_res) + d->params_offset);
-                params[0] = input_width;
-                for (int center = 0; center < temporal_width; ++center) {
-                    int center_frame = static_cast<int>(std::clamp<int64_t>(
-                        static_cast<int64_t>(n) - radius + center,
-                        0, d->vi->numFrames - 1));
-                    params[1 + 2 * center] = center_frame - start_frame;
-                    params[2 + 2 * center] = n - center_frame + radius;
                 }
             }
 
@@ -999,25 +825,23 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             float * h_dst = h_res;
             for (int plane = 0; plane < std::ssize(d->process); ++plane) {
                 if (!d->process[plane]) {
-                    h_dst += d_stride * height * 2 * (fused ? 1 : temporal_width);
+                    h_dst += d_stride * height * 2 * temporal_width;
                     continue;
                 }
 
                 float * dstp = reinterpret_cast<float *>(
                     vsapi->getWritePtr(dst.get(), plane));
 
-                if (radius && !fused) {
+                if (radius) {
                     vs_bitblt(
                         dstp, s_pitch, h_dst, d_pitch,
                         width_bytes, height * 2 * temporal_width
                     );
-                } else if (fused) {
-                    vs_bitblt(dstp, s_pitch, h_dst, d_pitch, width_bytes, height);
                 } else {
                     Aggregation(dstp, s_stride, h_dst, d_stride, width, height);
                 }
 
-                h_dst += d_stride * height * 2 * (fused ? 1 : temporal_width);
+                h_dst += d_stride * height * 2 * temporal_width;
             }
         } else { // !d->chroma
             for (int plane = 0; plane < d->vi->format->numPlanes; plane++) {
@@ -1041,22 +865,6 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                         width_bytes, height
                     );
                     h_src += d_stride * height;
-                    if (fused && (i + 1) % input_width == 0) {
-                        h_src += d_stride * height * (4 * radius + 1 - input_width);
-                    }
-                }
-
-                if (fused) {
-                    int * params = reinterpret_cast<int *>(
-                        reinterpret_cast<char *>(h_res) + d->params_offset);
-                    params[0] = input_width;
-                    for (int center = 0; center < temporal_width; ++center) {
-                        int center_frame = static_cast<int>(std::clamp<int64_t>(
-                            static_cast<int64_t>(n) - radius + center,
-                            0, d->vi->numFrames - 1));
-                        params[1 + 2 * center] = center_frame - start_frame;
-                        params[2 + 2 * center] = n - center_frame + radius;
-                    }
                 }
 
                 checkError(cuGraphLaunch(graphexec, stream));
@@ -1066,13 +874,11 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 float * dstp = reinterpret_cast<float *>(
                     vsapi->getWritePtr(dst.get(), plane));
 
-                if (radius && !fused) {
+                if (radius) {
                     vs_bitblt(
                         dstp, s_pitch, h_res, d_pitch,
                         width_bytes, height * 2 * temporal_width
                     );
-                } else if (fused) {
-                    vs_bitblt(dstp, s_pitch, h_res, d_pitch, width_bytes, height);
                 } else {
                     Aggregation(dstp, s_stride, h_res, d_stride, width, height);
                 }
@@ -1086,7 +892,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
         d->resources_lock.unlock();
         d->semaphore.release();
 
-        if (radius && !fused) {
+        if (radius) {
             VSMap * dst_prop { vsapi->getFramePropsRW(dst.get()) };
 
             vsapi->propSetInt(dst_prop, "BM3D_V_radius", d->radius, paReplace);
@@ -1123,7 +929,7 @@ static void VS_CC BM3DFree(
 
 static void BM3DCreateImpl(
     const VSMap *in, VSMap *out, void *userData,
-    VSCore *core, const VSAPI *vsapi, bool fused
+    VSCore *core, const VSAPI *vsapi
 ) noexcept {
 
     auto d { std::make_unique<BM3DData>() };
@@ -1166,7 +972,6 @@ static void BM3DCreateImpl(
         final_ = true;
     }
     d->final_ = final_;
-    d->fused = fused;
 
     float sigma[3];
     for (int i = 0; i < std::ssize(sigma); ++i) {
@@ -1223,9 +1028,6 @@ static void BM3DCreateImpl(
     }();
     if (radius < 0) {
         return set_error("\"radius\" must be non-negative");
-    }
-    if (fused && radius > (std::numeric_limits<int>::max() - 1) / 4) {
-        return set_error("\"radius\" is too large for fused temporal processing");
     }
     d->radius = radius;
 
@@ -1356,31 +1158,12 @@ static void BM3DCreateImpl(
     };
     const int num_planes { chroma ? 3 : 1 };
     const int temporal_width = 2 * radius + 1;
-    const int source_temporal_width = fused ? 4 * radius + 1 : temporal_width;
-    if (fused) {
-        const size_t min_temporal_stride =
-            static_cast<size_t>(max_width) * max_height;
-        const size_t max_kernel_offset = std::numeric_limits<int>::max();
-        if (
-            min_temporal_stride > max_kernel_offset ||
-            static_cast<size_t>(source_temporal_width) >
-                max_kernel_offset / min_temporal_stride ||
-            static_cast<size_t>(num_planes) > max_kernel_offset /
-                (min_temporal_stride * source_temporal_width)) {
-            return set_error("\"radius\" is too large for the clip dimensions");
-        }
-    }
+    const int source_temporal_width = temporal_width;
     const size_t source_rows = static_cast<size_t>(final_ ? 2 : 1) *
         static_cast<size_t>(num_planes) * source_temporal_width * max_height;
     const size_t result_rows = static_cast<size_t>(num_planes) *
         temporal_width * 2 * max_height;
     const size_t buffer_rows = std::max(source_rows, result_rows);
-    const size_t params_size = fused ?
-        (1 + 2 * static_cast<size_t>(temporal_width)) * sizeof(int) : 0;
-    const size_t min_pitch = static_cast<size_t>(max_width) * sizeof(float);
-    const size_t params_rows = fused ?
-        (params_size + min_pitch - 1) / min_pitch : 0;
-
     d->semaphore.current.store(num_copy_engines - 1, std::memory_order::relaxed);
 
     // GPU related
@@ -1410,13 +1193,12 @@ static void BM3DCreateImpl(
         size_t d_pitch;
         int d_stride;
         CUfunction functions[3];
-        CUfunction normalize_functions[3];
         for (int i = 0; i < num_copy_engines; ++i) {
             Resource<CUdeviceptr, cuMemFree> d_src {};
             if (i == 0) {
                 checkError(cuMemAllocPitch(
                     &d_src.data, &d_pitch, max_width * sizeof(float),
-                    fused ? buffer_rows + params_rows : source_rows, 4
+                    source_rows, 4
                 ));
                 if (d_pitch > static_cast<size_t>(std::numeric_limits<int>::max())) {
                     d_src = CUdeviceptr {};
@@ -1425,27 +1207,9 @@ static void BM3DCreateImpl(
                     return set_error("device pitch exceeds the supported range");
                 }
                 d_stride = static_cast<int>(d_pitch / sizeof(float));
-                if (fused) {
-                    const size_t temporal_stride =
-                        static_cast<size_t>(max_height) * d_stride;
-                    const size_t max_kernel_offset = std::numeric_limits<int>::max();
-                    if (
-                        temporal_stride > max_kernel_offset ||
-                        static_cast<size_t>(source_temporal_width) >
-                            max_kernel_offset / temporal_stride ||
-                        static_cast<size_t>(num_planes) > max_kernel_offset /
-                            (temporal_stride * source_temporal_width)) {
-                        d_src = CUdeviceptr {};
-                        cuCtxPopCurrent(nullptr);
-                        cuDevicePrimaryCtxRelease(d->device);
-                        return set_error("\"radius\" is too large for the device pitch");
-                    }
-                }
                 d->d_pitch = static_cast<int>(d_pitch);
-                d->params_offset = buffer_rows * d_pitch;
             } else {
-                checkError(cuMemAlloc(&d_src.data,
-                    fused ? buffer_rows * d_pitch + params_size : source_rows * d_pitch));
+                checkError(cuMemAlloc(&d_src.data, source_rows * d_pitch));
             }
 
             Resource<CUdeviceptr, cuMemFree> d_res {};
@@ -1453,7 +1217,7 @@ static void BM3DCreateImpl(
 
             Resource<float *, cuMemFreeHost> h_res {};
             checkError(cuMemAllocHost(reinterpret_cast<void **>(&h_res.data),
-                buffer_rows * d_pitch + params_size));
+                buffer_rows * d_pitch));
 
             Resource<CUstream, cuStreamDestroy> stream {};
             checkError(cuStreamCreate(&stream.data, CU_STREAM_NON_BLOCKING));
@@ -1466,7 +1230,7 @@ static void BM3DCreateImpl(
                         sigma[0], block_step[0], bm_range[0],
                         radius, ps_num[0], ps_range[0],
                         true, sigma[1], sigma[2],
-                        final_, fused, false,
+                        final_, false,
                         d->bm_error_s[0],
                         d->transform_2d_s[0], d->transform_1d_s[0],
                         extractor,
@@ -1480,20 +1244,9 @@ static void BM3DCreateImpl(
                     }
 
                     checkError(cuModuleGetFunction(&functions[0], d->modules[0], "bm3d"));
-                    if (fused) {
-                        checkError(cuModuleGetFunction(
-                            &normalize_functions[0], d->modules[0], "temporal_normalize"));
-                    }
                 }
 
-                const auto result = fused ? get_fused_graphexec(
-                    d_res, d_src, h_res,
-                    d_src.data + d->params_offset,
-                    reinterpret_cast<int *>(reinterpret_cast<char *>(h_res.data) + d->params_offset),
-                    width, height, d_stride,
-                    block_step[0], radius, true, final_, d->context,
-                    functions[0], normalize_functions[0]
-                ) : get_graphexec(
+                const auto result = get_graphexec(
                     d_res, d_src, h_res,
                     width, height, d_stride,
                     block_step[0], radius, true, final_, d->context,
@@ -1518,7 +1271,7 @@ static void BM3DCreateImpl(
                                 plane_width, plane_height, d_stride,
                                 sigma[plane], block_step[plane], bm_range[plane],
                                 radius, ps_num[plane], ps_range[plane],
-                                false, 0.0f, 0.0f, final_, fused, false,
+                                false, 0.0f, 0.0f, final_, false,
                                 d->bm_error_s[plane],
                                 d->transform_2d_s[plane], d->transform_1d_s[plane],
                                 extractor,
@@ -1533,21 +1286,9 @@ static void BM3DCreateImpl(
 
                             checkError(cuModuleGetFunction(
                                 &functions[plane], d->modules[plane], "bm3d"));
-                            if (fused) {
-                                checkError(cuModuleGetFunction(
-                                    &normalize_functions[plane], d->modules[plane],
-                                    "temporal_normalize"));
-                            }
                         }
 
-                        const auto result = fused ? get_fused_graphexec(
-                            d_res, d_src, h_res,
-                            d_src.data + d->params_offset,
-                            reinterpret_cast<int *>(reinterpret_cast<char *>(h_res.data) + d->params_offset),
-                            plane_width, plane_height, d_stride,
-                            block_step[plane], radius, false, final_, d->context,
-                            functions[plane], normalize_functions[plane]
-                        ) : get_graphexec(
+                        const auto result = get_graphexec(
                             d_res, d_src, h_res,
                             plane_width, plane_height, d_stride,
                             block_step[plane], radius, false, final_, d->context,
@@ -1575,7 +1316,7 @@ static void BM3DCreateImpl(
     }
 
     vsapi->createFilter(
-        in, out, fused ? "BM3Dv2" : "BM3D",
+        in, out, "BM3D",
         BM3DInit, BM3DGetFrame, BM3DFree,
         fmParallel, 0, d.release(), core
     );
@@ -1585,7 +1326,7 @@ static void VS_CC BM3DCreate(
     const VSMap *in, VSMap *out, void *userData,
     VSCore *core, const VSAPI *vsapi
 ) noexcept {
-    BM3DCreateImpl(in, out, userData, core, vsapi, false);
+    BM3DCreateImpl(in, out, userData, core, vsapi);
 }
 
 struct RollingResource {
@@ -1604,8 +1345,12 @@ struct RollingData {
     VSNodeRef * node {};
     VSNodeRef * ref_node {};
     const VSVideoInfo * vi {};
+    const VSAPI * vsapi {};
     int radius {};
     int chunk_size {};
+    std::atomic<int> cache_chunks { 1 };
+    int cache_limit { 1 };
+    bool cache_adaptive {};
     int d_pitch {};
     CUdevice device {};
     CUcontext context {};
@@ -1623,11 +1368,58 @@ struct RollingData {
     RollingResource resource;
     std::mutex resource_lock;
     mutable std::shared_mutex cache_lock;
-    int cached_start { -1 };
-    std::vector<const VSFrameRef *> cached_frames;
-};
+    struct CacheChunk {
+        int start {};
+        std::vector<const VSFrameRef *> frames;
 
-struct RollingRequest { int chunk_start; };
+        const VSAPI * vsapi {};
+
+        CacheChunk() noexcept = default;
+
+        CacheChunk(
+            int start_, std::vector<const VSFrameRef *> && frames_,
+            const VSAPI * vsapi_
+        ) noexcept :
+            start { start_ }, frames { std::move(frames_) }, vsapi { vsapi_ }
+        {}
+
+        CacheChunk(const CacheChunk &) = delete;
+        CacheChunk & operator=(const CacheChunk &) = delete;
+
+        CacheChunk(CacheChunk && other) noexcept :
+            start { other.start }, frames { std::move(other.frames) },
+            vsapi { std::exchange(other.vsapi, nullptr) }
+        {}
+
+        CacheChunk & operator=(CacheChunk && other) noexcept {
+            if (this != &other) {
+                release();
+                start = other.start;
+                frames = std::move(other.frames);
+                vsapi = std::exchange(other.vsapi, nullptr);
+            }
+            return *this;
+        }
+
+        ~CacheChunk() noexcept { release(); }
+
+    private:
+        void release() noexcept {
+            if (!vsapi) return;
+            for (const VSFrameRef * frame : frames) {
+                vsapi->freeFrame(frame);
+            }
+        }
+    };
+    std::list<CacheChunk> cached_chunks;
+    std::deque<int> evicted_chunks;
+    int cache_reuse_events {};
+
+    ~RollingData() noexcept {
+        if (node) vsapi->freeNode(node);
+        if (ref_node) vsapi->freeNode(ref_node);
+    }
+};
 
 static bool checked_mul(size_t lhs, size_t rhs, size_t & result) noexcept {
     if (lhs && rhs > std::numeric_limits<size_t>::max() / lhs) return false;
@@ -1650,32 +1442,66 @@ static void VS_CC RollingInit(
 }
 
 static const VSFrameRef * rolling_cache_get(
-    const RollingData * d, int n, const VSAPI *vsapi
-) noexcept {
-    std::shared_lock lock { d->cache_lock };
-    const int offset = n - d->cached_start;
-    if (offset < 0 || offset >= std::ssize(d->cached_frames)) return nullptr;
-    return vsapi->cloneFrameRef(d->cached_frames[offset]);
+    RollingData * d, int n, const VSAPI *vsapi
+) {
+    if (d->cache_chunks.load(std::memory_order_relaxed) == 1) {
+        std::shared_lock lock { d->cache_lock };
+        if (d->cached_chunks.empty()) return nullptr;
+        const auto & cache = d->cached_chunks.front();
+        const int offset = n - cache.start;
+        if (offset < 0 || offset >= std::ssize(cache.frames)) return nullptr;
+        return vsapi->cloneFrameRef(cache.frames[offset]);
+    }
+
+    std::unique_lock lock { d->cache_lock };
+    for (auto it = d->cached_chunks.begin(); it != d->cached_chunks.end();
+        ++it) {
+        const int offset = n - it->start;
+        if (offset < 0 || offset >= std::ssize(it->frames)) continue;
+        if (std::next(it) != d->cached_chunks.end()) {
+            d->cached_chunks.splice(
+                d->cached_chunks.end(), d->cached_chunks, it);
+            it = std::prev(d->cached_chunks.end());
+        }
+        return vsapi->cloneFrameRef(it->frames[offset]);
+    }
+    return nullptr;
 }
 
-static const VSFrameRef *VS_CC RollingGetFrame(
-    int n, int activationReason, void **instanceData, void **frameData,
+static void rolling_cache_maybe_grow(
+    RollingData * d, int chunk_start
+) {
+    if (!d->cache_adaptive) return;
+
+    std::unique_lock lock { d->cache_lock };
+    if (d->cache_chunks.load(std::memory_order_relaxed) >= d->cache_limit) {
+        return;
+    }
+    const auto evicted = std::find(
+        d->evicted_chunks.begin(), d->evicted_chunks.end(), chunk_start);
+    if (evicted == d->evicted_chunks.end()) return;
+    d->evicted_chunks.erase(evicted);
+    if (++d->cache_reuse_events < 2) return;
+    d->cache_reuse_events = 0;
+    d->cache_chunks.fetch_add(1, std::memory_order_relaxed);
+}
+
+static const VSFrameRef * RollingGetFrameImpl(
+    int n, int activationReason, void **instanceData, void **,
     VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi
-) noexcept {
+) {
     auto d = static_cast<RollingData *>(*instanceData);
     if (activationReason == arInitial) {
-        const int chunk_start = n / d->chunk_size * d->chunk_size;
-        *frameData = new RollingRequest { chunk_start };
         if (const VSFrameRef * cached = rolling_cache_get(d, n, vsapi)) {
-            delete static_cast<RollingRequest *>(*frameData);
-            *frameData = nullptr;
             return cached;
         }
+        const int64_t chunk_start =
+            static_cast<int64_t>(n / d->chunk_size) * d->chunk_size;
+        const int64_t clip_last = static_cast<int64_t>(d->vi->numFrames) - 1;
         const int64_t first = std::max<int64_t>(
-            static_cast<int64_t>(chunk_start) - 2LL * d->radius, 0);
+            chunk_start - 2LL * d->radius, 0);
         const int64_t last = std::min<int64_t>(
-            static_cast<int64_t>(chunk_start) + d->chunk_size - 1 + 2LL * d->radius,
-            d->vi->numFrames - 1);
+            chunk_start + d->chunk_size - 1 + 2LL * d->radius, clip_last);
         for (int64_t frame = first; frame <= last; ++frame) {
             vsapi->requestFrameFilter(static_cast<int>(frame), d->node, frameCtx);
             if (d->final_) vsapi->requestFrameFilter(
@@ -1684,19 +1510,18 @@ static const VSFrameRef *VS_CC RollingGetFrame(
         return nullptr;
     }
     if (activationReason == arError) {
-        delete static_cast<RollingRequest *>(*frameData);
-        *frameData = nullptr;
         return nullptr;
     }
     if (activationReason != arAllFramesReady) return nullptr;
 
-    std::unique_ptr<RollingRequest> request {
-        static_cast<RollingRequest *>(*frameData) };
-    *frameData = nullptr;
     if (const VSFrameRef * cached = rolling_cache_get(d, n, vsapi)) return cached;
 
     std::unique_lock resource_guard { d->resource_lock };
     if (const VSFrameRef * cached = rolling_cache_get(d, n, vsapi)) return cached;
+    const int64_t chunk_start_64 =
+        static_cast<int64_t>(n / d->chunk_size) * d->chunk_size;
+    const int chunk_start = static_cast<int>(chunk_start_64);
+    rolling_cache_maybe_grow(d, chunk_start);
     const auto set_error = [&](const std::string & message) {
         vsapi->setFilterError(("BM3Dv2 rolling: " + message).c_str(), frameCtx);
         return static_cast<const VSFrameRef *>(nullptr);
@@ -1709,15 +1534,17 @@ static const VSFrameRef *VS_CC RollingGetFrame(
     struct ContextGuard {
         ~ContextGuard() noexcept { cuCtxPopCurrent(nullptr); }
     } context_guard;
-    const int chunk_start = request->chunk_start;
-    const int valid_outputs = std::min(d->chunk_size, d->vi->numFrames - chunk_start);
-    const int logical_first = chunk_start - 2 * d->radius;
+    const int64_t clip_last = static_cast<int64_t>(d->vi->numFrames) - 1;
+    const int valid_outputs = static_cast<int>(std::min<int64_t>(
+        d->chunk_size, static_cast<int64_t>(d->vi->numFrames) - chunk_start_64));
+    const int64_t logical_first = chunk_start_64 - 2LL * d->radius;
     const int logical_source_width = d->chunk_size + 4 * d->radius;
     const int centers = d->chunk_size + 2 * d->radius;
-    const int first_frame = std::max(logical_first, 0);
-    const int last_frame = std::min(
-        chunk_start + d->chunk_size - 1 + 2 * d->radius,
-        d->vi->numFrames - 1);
+    const int first_frame = static_cast<int>(std::max<int64_t>(
+        logical_first, 0));
+    const int last_frame = static_cast<int>(std::min<int64_t>(
+        chunk_start_64 + d->chunk_size - 1 + 2LL * d->radius,
+        clip_last));
     const int unique_frames = last_frame - first_frame + 1;
     using freeFrame_t = decltype(vsapi->freeFrame);
     using FramePtr = std::unique_ptr<const VSFrameRef, const freeFrame_t &>;
@@ -1725,10 +1552,13 @@ static const VSFrameRef *VS_CC RollingGetFrame(
     std::vector<FramePtr> reference_frames;
     source_frames.reserve(unique_frames);
     reference_frames.reserve(d->final_ ? unique_frames : 0);
-    for (int frame = first_frame; frame <= last_frame; ++frame) {
-        source_frames.emplace_back(vsapi->getFrameFilter(frame, d->node, frameCtx), vsapi->freeFrame);
+    for (int64_t frame = first_frame; frame <= last_frame; ++frame) {
+        source_frames.emplace_back(vsapi->getFrameFilter(
+            static_cast<int>(frame), d->node, frameCtx), vsapi->freeFrame);
         if (d->final_) reference_frames.emplace_back(
-            vsapi->getFrameFilter(frame, d->ref_node, frameCtx), vsapi->freeFrame);
+            vsapi->getFrameFilter(
+                static_cast<int>(frame), d->ref_node, frameCtx),
+            vsapi->freeFrame);
     }
 
     RollingResource & resource = d->resource;
@@ -1738,7 +1568,8 @@ static const VSFrameRef *VS_CC RollingGetFrame(
         const int plane_width = vsapi->getFrameWidth(frames.front().get(), plane);
         const int source_pitch = vsapi->getStride(frames.front().get(), plane);
         for (int logical = 0; logical < logical_source_width; ++logical) {
-            const int frame = std::clamp(logical_first + logical, 0, d->vi->numFrames - 1);
+            const int frame = static_cast<int>(std::clamp<int64_t>(
+                logical_first + logical, 0, clip_last));
             const VSFrameRef * source = frames[frame - first_frame].get();
             vs_bitblt(dst, d->d_pitch, vsapi->getReadPtr(source, plane), source_pitch,
                 plane_width * sizeof(float), plane_height);
@@ -1761,8 +1592,10 @@ static const VSFrameRef *VS_CC RollingGetFrame(
     }
     resource.h_params.data[0] = logical_source_width;
     for (int center = 0; center < centers; ++center) {
-        const int frame = std::clamp(chunk_start - d->radius + center, 0, d->vi->numFrames - 1);
-        resource.h_params.data[1 + center] = frame - logical_first;
+        const int64_t frame = std::clamp<int64_t>(
+            chunk_start_64 - d->radius + center, 0, clip_last);
+        resource.h_params.data[1 + center] =
+            static_cast<int>(frame - logical_first);
     }
     checkError(cuGraphLaunch(resource.graphexec, resource.stream));
     checkError(cuStreamSynchronize(resource.stream));
@@ -1770,7 +1603,9 @@ static const VSFrameRef *VS_CC RollingGetFrame(
     std::vector<const VSFrameRef *> new_cache;
     new_cache.reserve(valid_outputs);
     for (int output = 0; output < valid_outputs; ++output) {
-        const VSFrameRef * source = source_frames[chunk_start + output - first_frame].get();
+        const size_t source_index = static_cast<size_t>(
+            chunk_start_64 + output - first_frame);
+        const VSFrameRef * source = source_frames[source_index].get();
         const VSFrameRef * plane_sources[] {
             d->process[0] ? nullptr : source,
             d->process[1] ? nullptr : source,
@@ -1792,24 +1627,57 @@ static const VSFrameRef *VS_CC RollingGetFrame(
         }
         new_cache.push_back(destination);
     }
-    std::vector<const VSFrameRef *> old_cache;
+    RollingData::CacheChunk new_chunk {
+        chunk_start, std::move(new_cache), vsapi
+    };
+    std::list<RollingData::CacheChunk> evicted;
     {
         std::unique_lock lock { d->cache_lock };
-        old_cache = std::move(d->cached_frames);
-        d->cached_frames = std::move(new_cache);
-        d->cached_start = chunk_start;
+        d->cached_chunks.push_back(std::move(new_chunk));
+        while (std::ssize(d->cached_chunks) >
+            d->cache_chunks.load(std::memory_order_relaxed)) {
+            evicted.splice(evicted.end(), d->cached_chunks,
+                d->cached_chunks.begin());
+            if (d->cache_adaptive) {
+                d->evicted_chunks.push_back(evicted.back().start);
+                const size_t history_limit = std::max(
+                    size_t { 8 }, static_cast<size_t>(d->cache_limit) * 2);
+                while (d->evicted_chunks.size() > history_limit) {
+                    d->evicted_chunks.pop_front();
+                }
+            }
+        }
     }
-    for (const VSFrameRef * frame : old_cache) vsapi->freeFrame(frame);
     return rolling_cache_get(d, n, vsapi);
+}
+
+static const VSFrameRef *VS_CC RollingGetFrame(
+    int n, int activationReason, void **instanceData, void **frameData,
+    VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi
+) noexcept {
+    try {
+        return RollingGetFrameImpl(
+            n, activationReason, instanceData, frameData,
+            frameCtx, core, vsapi);
+    } catch (const std::bad_alloc &) {
+        vsapi->setFilterError(
+            "BM3Dv2 rolling: memory allocation failed", frameCtx);
+    } catch (const std::exception & error) {
+        vsapi->setFilterError(error.what(), frameCtx);
+    } catch (...) {
+        vsapi->setFilterError("BM3Dv2 rolling: internal error", frameCtx);
+    }
+    return nullptr;
 }
 
 static void VS_CC RollingFree(void *instanceData, VSCore *, const VSAPI *vsapi) noexcept {
     auto d = static_cast<RollingData *>(instanceData);
-    std::vector<const VSFrameRef *> cached;
-    { std::unique_lock lock { d->cache_lock }; cached = std::move(d->cached_frames); }
-    for (const VSFrameRef * frame : cached) vsapi->freeFrame(frame);
-    vsapi->freeNode(d->node);
-    vsapi->freeNode(d->ref_node);
+    std::list<RollingData::CacheChunk> cached;
+    {
+        std::unique_lock lock { d->cache_lock };
+        cached.splice(cached.end(), d->cached_chunks);
+    }
+    cached.clear();
     const CUdevice device = d->device;
     cuCtxPushCurrent(d->context);
     delete d;
@@ -1818,19 +1686,15 @@ static void VS_CC RollingFree(void *instanceData, VSCore *, const VSAPI *vsapi) 
 }
 
 static void RollingCreate(
-    const VSMap *in, VSMap *out, int chunk_size,
+    const VSMap *in, VSMap *out, int chunk_size, int cache_chunks,
+    int cache_limit, bool cache_adaptive,
     VSCore *core, const VSAPI *vsapi
 ) noexcept {
-    auto d = std::make_unique<RollingData>();
+    std::unique_ptr<RollingData> d;
     bool primary_context_retained = false;
     bool context_pushed = false;
-    const auto set_error = [&](const std::string & message) {
-        vsapi->setError(out, ("BM3Dv2 rolling: " + message).c_str());
-        if (d->node) vsapi->freeNode(d->node);
-        if (d->ref_node) vsapi->freeNode(d->ref_node);
-        d->node = nullptr;
-        d->ref_node = nullptr;
-        const CUdevice retained_device = d->device;
+    const auto cleanup = [&]() noexcept {
+        const CUdevice retained_device = d ? d->device : CUdevice {};
         // Resource destructors need the owning CUDA context to be current.
         d.reset();
         if (context_pushed) {
@@ -1841,6 +1705,17 @@ static void RollingCreate(
             cuDevicePrimaryCtxRelease(retained_device);
             primary_context_retained = false;
         }
+    };
+
+    try {
+    d = std::make_unique<RollingData>();
+    d->vsapi = vsapi;
+    d->cache_chunks.store(cache_chunks, std::memory_order_relaxed);
+    d->cache_limit = cache_limit;
+    d->cache_adaptive = cache_adaptive;
+    const auto set_error = [&](const std::string & message) {
+        vsapi->setError(out, ("BM3Dv2 rolling: " + message).c_str());
+        cleanup();
     };
     d->node = vsapi->propGetNode(in, "clip", 0, nullptr);
     d->vi = vsapi->getVideoInfo(d->node);
@@ -2051,7 +1926,7 @@ static void RollingCreate(
             group.sigma, group.block_step, group.bm_range,
             d->radius, group.ps_num, group.ps_range,
             d->chroma, d->chroma ? sigma[1] : 0.0f, d->chroma ? sigma[2] : 0.0f,
-            d->final_, false, true,
+            d->final_, true,
             d->bm_error_s[plane], d->transform_2d_s[plane], d->transform_1d_s[plane],
             extractor, d->device);
         if (std::holds_alternative<std::string>(result)) return set_error(std::get<std::string>(result));
@@ -2075,6 +1950,16 @@ static void RollingCreate(
     primary_context_retained = false;
     vsapi->createFilter(in, out, "BM3Dv2 rolling", RollingInit, RollingGetFrame,
         RollingFree, fmParallelRequests, 0, d.release(), core);
+    } catch (const std::bad_alloc &) {
+        cleanup();
+        vsapi->setError(out, "BM3Dv2 rolling: memory allocation failed");
+    } catch (const std::exception & error) {
+        cleanup();
+        vsapi->setError(out, error.what());
+    } catch (...) {
+        cleanup();
+        vsapi->setError(out, "BM3Dv2 rolling: internal error");
+    }
 }
 
 static VSMap * copy_bm3d_args(const VSMap *in, const VSAPI *vsapi) noexcept {
@@ -2082,7 +1967,9 @@ static VSMap * copy_bm3d_args(const VSMap *in, const VSAPI *vsapi) noexcept {
     for (int key_index = 0; key_index < vsapi->propNumKeys(in); ++key_index) {
         const char *key = vsapi->propGetKey(in, key_index);
         if (std::string_view { key } == "temporal_mode" ||
-            std::string_view { key } == "rolling_chunk") continue;
+            std::string_view { key } == "rolling_chunk" ||
+            std::string_view { key } == "rolling_cache_chunks" ||
+            std::string_view { key } == "rolling_cache_limit") continue;
         const int elements = vsapi->propNumElements(in, key);
         const int type = vsapi->propGetType(in, key);
         for (int index = 0; index < elements; ++index) {
@@ -2326,15 +2213,17 @@ static void VS_CC BM3Dv2Create(
 ) {
 
     int error;
-    std::string temporal_mode { "fused" };
-    if (vsapi->propNumElements(in, "temporal_mode") >= 0) {
+    std::string temporal_mode { "rolling" };
+    const bool temporal_mode_supplied =
+        vsapi->propNumElements(in, "temporal_mode") >= 0;
+    if (temporal_mode_supplied) {
         const char * value = vsapi->propGetData(in, "temporal_mode", 0, &error);
         const int size = vsapi->propGetDataSize(in, "temporal_mode", 0, &error);
         if (error) { vsapi->setError(out, "BM3Dv2: \"temporal_mode\" must be a string"); return; }
         temporal_mode.assign(value, size);
     }
-    if (temporal_mode != "fused" && temporal_mode != "legacy" && temporal_mode != "rolling") {
-        vsapi->setError(out, "BM3Dv2: \"temporal_mode\" must be one of fused, legacy, or rolling");
+    if (temporal_mode != "legacy" && temporal_mode != "rolling") {
+        vsapi->setError(out, "BM3Dv2: \"temporal_mode\" must be one of legacy or rolling");
         return;
     }
     const bool chunk_supplied = vsapi->propNumElements(in, "rolling_chunk") >= 0;
@@ -2342,13 +2231,58 @@ static void VS_CC BM3Dv2Create(
         vsapi->setError(out, "BM3Dv2: \"rolling_chunk\" is valid only when temporal_mode is rolling");
         return;
     }
-    int rolling_chunk = 16;
+    int rolling_chunk = 4;
     if (chunk_supplied) {
         rolling_chunk = int64ToIntS(vsapi->propGetInt(in, "rolling_chunk", 0, &error));
         if (error || rolling_chunk < 1 || rolling_chunk > 64) {
             vsapi->setError(out, "BM3Dv2: \"rolling_chunk\" must be in range [1, 64]");
             return;
         }
+    }
+
+    const bool cache_chunks_supplied =
+        vsapi->propNumElements(in, "rolling_cache_chunks") >= 0;
+    if (cache_chunks_supplied && temporal_mode != "rolling") {
+        vsapi->setError(out,
+            "BM3Dv2: \"rolling_cache_chunks\" is valid only when temporal_mode is rolling");
+        return;
+    }
+    int rolling_cache_chunks = 1;
+    if (cache_chunks_supplied) {
+        rolling_cache_chunks = int64ToIntS(
+            vsapi->propGetInt(in, "rolling_cache_chunks", 0, &error));
+        if (error || rolling_cache_chunks < 1 || rolling_cache_chunks > 64) {
+            vsapi->setError(out,
+                "BM3Dv2: \"rolling_cache_chunks\" must be in range [1, 64]");
+            return;
+        }
+    }
+
+    const bool cache_limit_supplied =
+        vsapi->propNumElements(in, "rolling_cache_limit") >= 0;
+    if (cache_limit_supplied && temporal_mode != "rolling") {
+        vsapi->setError(out,
+            "BM3Dv2: \"rolling_cache_limit\" is valid only when temporal_mode is rolling");
+        return;
+    }
+    int rolling_cache_limit = 16;
+    if (cache_limit_supplied) {
+        rolling_cache_limit = int64ToIntS(
+            vsapi->propGetInt(in, "rolling_cache_limit", 0, &error));
+        if (error || rolling_cache_limit < 1 || rolling_cache_limit > 64) {
+            vsapi->setError(out,
+                "BM3Dv2: \"rolling_cache_limit\" must be in range [1, 64]");
+            return;
+        }
+    }
+    if (rolling_cache_limit < rolling_cache_chunks) {
+        vsapi->setError(out,
+            "BM3Dv2: \"rolling_cache_limit\" must be greater than or equal to \"rolling_cache_chunks\"");
+        return;
+    }
+    const bool cache_adaptive = cache_limit_supplied || !cache_chunks_supplied;
+    if (!cache_adaptive) {
+        rolling_cache_limit = rolling_cache_chunks;
     }
 
     std::array<bool, 3> process;
@@ -2374,7 +2308,7 @@ static void VS_CC BM3Dv2Create(
     error = 0;
     int radius = int64ToIntS(vsapi->propGetInt(in, "radius", 0, &error));
     if (error) radius = 0;
-    if (temporal_mode == "rolling" && radius <= 0) {
+    if (temporal_mode_supplied && temporal_mode == "rolling" && radius <= 0) {
         vsapi->freeNode(src);
         vsapi->setError(out, "BM3Dv2: rolling temporal mode requires radius greater than zero");
         return;
@@ -2390,10 +2324,10 @@ static void VS_CC BM3Dv2Create(
 
     if (radius > 0) {
         vsapi->freeNode(src);
-        if (temporal_mode == "fused") {
-            BM3DCreateImpl(in, out, userData, core, vsapi, true);
-        } else if (temporal_mode == "rolling") {
-            RollingCreate(in, out, rolling_chunk, core, vsapi);
+        if (temporal_mode == "rolling") {
+            RollingCreate(
+                in, out, rolling_chunk, rolling_cache_chunks,
+                rolling_cache_limit, cache_adaptive, core, vsapi);
         } else {
             auto plugin = vsapi->getPluginById(PLUGIN_ID, core);
             auto map = copy_bm3d_args(in, vsapi);
@@ -2508,6 +2442,8 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit(
         "zero_init:int:opt;"
         "temporal_mode:data:opt;"
         "rolling_chunk:int:opt;"
+        "rolling_cache_chunks:int:opt;"
+        "rolling_cache_limit:int:opt;"
     };
 
     registerFunc("BM3D", bm3d_args, BM3DCreate, nullptr, plugin);

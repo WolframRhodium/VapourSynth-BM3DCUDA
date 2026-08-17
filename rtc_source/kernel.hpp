@@ -63,7 +63,7 @@ external variables:
     float sigma, int block_step, int bm_range,
     int _radius, int ps_num, int ps_range,
     float sigma_u, float sigma_v,
-    bool temporal, bool chroma, bool final_, bool fused, bool rolling
+    bool temporal, bool chroma, bool final_, bool rolling
     float FLT_MAX, float FLT_EPSILON,
     float extractor,
     __device__ static inline float bm_error(const float *, const float *)
@@ -701,8 +701,8 @@ void bm3d(
     /* shape: [(final_ ? 2 : 1), (chroma ? 3 : 1), (2 * radius + 1), height, stride] */
     const float * __restrict__ src,
     int source_temporal_width,
-    const int * __restrict__ fused_params,
-    int fused_center
+    const int * __restrict__ rolling_params,
+    int center
 ) {
 
     __shared__ float buffer[8 * smem_stride];
@@ -729,17 +729,12 @@ void bm3d(
     int temporal_width = 2 * radius + 1;
     int source_valid_width = source_temporal_width;
     int source_center = radius;
-    int output_z = -1;
-    if constexpr (fused) {
-        source_valid_width = fused_params[0];
-        source_center = fused_params[1 + 2 * fused_center];
-        output_z = fused_params[2 + 2 * fused_center];
-    } else if constexpr (rolling) {
-        source_valid_width = fused_params[0];
-        source_center = fused_params[1 + fused_center];
+    if constexpr (rolling) {
+        source_valid_width = rolling_params[0];
+        source_center = rolling_params[1 + center];
     }
-    int source_plane_stride = ((fused || rolling) ? source_temporal_width : temporal_width) * temporal_stride;
-    int result_plane_stride = (fused ? 1 : temporal_width) * temporal_stride;
+    int source_plane_stride = (rolling ? source_temporal_width : temporal_width) * temporal_stride;
+    int result_plane_stride = temporal_width * temporal_stride;
     int clip_stride = (chroma ? 3 : 1) * source_plane_stride;
 
     float current_patch[8];
@@ -847,7 +842,7 @@ void bm3d(
                 int frame_index8_y = 0;
 
                 int source_index = temporal_index;
-                if constexpr (fused || rolling) {
+                if constexpr (rolling) {
                     source_index = min(max(
                         source_center - radius + temporal_index, 0),
                         source_valid_width - 1);
@@ -1007,7 +1002,7 @@ void bm3d(
                 if constexpr (temporal) {
                     int tmp_z = __shfl_sync(0xFFFFFFFF, index8_z, i, 8);
                     int source_index = tmp_z;
-                    if constexpr (fused || rolling) {
+                    if constexpr (rolling) {
                         source_index = min(max(
                             source_center - radius + tmp_z, 0),
                             source_valid_width - 1);
@@ -1035,7 +1030,7 @@ void bm3d(
                 if constexpr (temporal) {
                     int tmp_z = __shfl_sync(0xFFFFFFFF, index8_z, i, 8);
                     int source_index = tmp_z;
-                    if constexpr (fused || rolling) {
+                    if constexpr (rolling) {
                         source_index = min(max(
                             source_center - radius + tmp_z, 0),
                             source_valid_width - 1);
@@ -1064,12 +1059,6 @@ void bm3d(
             int offset;
             if constexpr (temporal) {
                 int tmp_z = __shfl_sync(0xFFFFFFFF, index8_z, i, 8);
-                if constexpr (fused) {
-                    if (tmp_z != output_z) {
-                        continue;
-                    }
-                    tmp_z = 0;
-                }
                 offset = tmp_z * 2 * temporal_stride + tmp_y * stride + tmp_x;
             } else {
                 offset = tmp_y * stride + tmp_x;
@@ -1100,34 +1089,6 @@ void bm3d(
         src += source_plane_stride;
         res += result_plane_stride * 2;
     }
-}
-
-extern "C" __global__ void temporal_normalize(
-    float * __restrict__ res,
-    int normalize_width, int normalize_height, int normalize_stride,
-    int num_planes, int centers
-) {
-    const int x = blockIdx.x * blockDim.x + threadIdx.x;
-    const int y = blockIdx.y;
-    const int plane = blockIdx.z;
-    if (x >= normalize_width || y >= normalize_height || plane >= num_planes) {
-        return;
-    }
-
-    const size_t image_stride = static_cast<size_t>(normalize_height) * normalize_stride;
-    const size_t plane_stride = 2 * image_stride;
-    const size_t center_stride = num_planes * plane_stride;
-    float weighted_sum = 0.0f;
-    float weight = 0.0f;
-    for (int center = 0; center < centers; ++center) {
-        const size_t offset = center * center_stride + plane * plane_stride +
-            y * normalize_stride + x;
-        weighted_sum += res[offset];
-        weight += res[offset + image_stride];
-    }
-
-    res[plane * plane_stride + y * normalize_stride + x] =
-        __fdiv_rn(weighted_sum, weight);
 }
 
 extern "C" __global__ void rolling_scatter(
