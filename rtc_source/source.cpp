@@ -685,11 +685,8 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
     auto d = static_cast<BM3DData *>(*instanceData);
 
     if (activationReason == arInitial) {
-        int64_t request_radius = d->radius;
-        int start_frame = static_cast<int>(
-            std::max<int64_t>(static_cast<int64_t>(n) - request_radius, 0));
-        int end_frame = static_cast<int>(std::min<int64_t>(
-            static_cast<int64_t>(n) + request_radius, d->vi->numFrames - 1));
+        int start_frame = std::max(n - d->radius, 0);
+        int end_frame = std::min(n + d->radius, d->vi->numFrames - 1);
 
         for (int i = start_frame; i <= end_frame; ++i) {
             vsapi->requestFrameFilter(i, d->node, frameCtx);
@@ -703,8 +700,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
         int radius = d->radius;
         int temporal_width = 2 * radius + 1;
         bool final_ = d->final_;
-        int input_width = temporal_width;
-        int num_input_frames = input_width * (final_ ? 2 : 1); // including ref
+        int num_input_frames = temporal_width * (final_ ? 2 : 1); // including ref
 
         using freeFrame_t = decltype(vsapi->freeFrame);
         const std::vector srcs = [&](){
@@ -713,8 +709,8 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             temp.reserve(num_input_frames);
 
             if (final_) {
-                for (int i = 0; i < input_width; ++i) {
-                    int clamped_n = std::clamp(n - radius + i, 0, d->vi->numFrames - 1);
+                for (int i = -radius; i <= radius; ++i) {
+                    int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
                     temp.emplace_back(
                         vsapi->getFrameFilter(clamped_n, d->ref_node, frameCtx),
                         vsapi->freeFrame
@@ -722,8 +718,8 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
                 }
             }
 
-            for (int i = 0; i < input_width; ++i) {
-                int clamped_n = std::clamp(n - radius + i, 0, d->vi->numFrames - 1);
+            for (int i = -radius; i <= radius; ++i) {
+                int clamped_n = std::clamp(n + i, 0, d->vi->numFrames - 1);
                 temp.emplace_back(
                     vsapi->getFrameFilter(clamped_n, d->node, frameCtx),
                     vsapi->freeFrame
@@ -733,8 +729,7 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             return temp;
         }();
 
-        int center_index = radius;
-        const VSFrameRef * src = srcs[center_index + (final_ ? input_width : 0)].get();
+        const VSFrameRef * src = srcs[radius + (final_ ? temporal_width : 0)].get();
 
         std::unique_ptr<VSFrameRef, const freeFrame_t &> dst { nullptr, vsapi->freeFrame };
         if (radius) {
@@ -803,9 +798,9 @@ static const VSFrameRef *VS_CC BM3DGetFrame(
             float * h_src = h_res;
             for (int outer = 0; outer < (final_ ? 2 : 1); ++outer) {
                 for (int i = 0; i < std::ssize(d->process); ++i) {
-                    for (int j = 0; j < input_width; ++j) {
+                    for (int j = 0; j < temporal_width; ++j) {
                         if (i == 0 || d->process[i]) {
-                            auto current_src = srcs[j + outer * input_width].get();
+                            auto current_src = srcs[j + outer * temporal_width].get();
 
                             vs_bitblt(
                                 h_src, d_pitch,
@@ -1421,18 +1416,6 @@ struct RollingData {
     }
 };
 
-static bool checked_mul(size_t lhs, size_t rhs, size_t & result) noexcept {
-    if (lhs && rhs > std::numeric_limits<size_t>::max() / lhs) return false;
-    result = lhs * rhs;
-    return true;
-}
-
-static bool checked_add(size_t lhs, size_t rhs, size_t & result) noexcept {
-    if (rhs > std::numeric_limits<size_t>::max() - lhs) return false;
-    result = lhs + rhs;
-    return true;
-}
-
 static void VS_CC RollingInit(
     VSMap *, VSMap *, void **instanceData, VSNode *node,
     VSCore *, const VSAPI *vsapi
@@ -1829,26 +1812,18 @@ static void RollingCreate(
     }
     if (max_width > std::numeric_limits<int>::max() - 255 || max_height > 65535)
         return set_error("clip dimensions exceed CUDA grid limits");
-    size_t temporal_stride = 0;
-    size_t source_offset = 0;
-    size_t scratch_offset = 0;
-    if (!checked_mul(static_cast<size_t>(max_width), max_height, temporal_stride) ||
-        !checked_mul(temporal_stride, source_width, source_offset) ||
-        !checked_mul(temporal_stride, static_cast<size_t>(temporal_width) * 2, scratch_offset) ||
-        !checked_mul(source_offset, graph_planes, source_offset) ||
-        !checked_mul(scratch_offset, graph_planes, scratch_offset) ||
+    size_t temporal_stride = static_cast<size_t>(max_width) * max_height;
+    size_t source_offset = temporal_stride * source_width * graph_planes;
+    size_t scratch_offset = temporal_stride * temporal_width * 2 * graph_planes;
+    if (
         source_offset > std::numeric_limits<int>::max() ||
         scratch_offset > std::numeric_limits<int>::max()) {
         return set_error("clip dimensions exceed CUDA indexing limits");
     }
     size_t source_rows = 0, output_rows = 0;
     if (d->chroma) {
-        size_t plane_rows = 0;
-        if (!checked_mul(static_cast<size_t>(source_width), height, plane_rows) ||
-            !checked_mul(plane_rows, static_cast<size_t>(clips) * 3, source_rows) ||
-            !checked_mul(static_cast<size_t>(chunk_size) * 6, height, output_rows)) {
-            return set_error("rolling buffer size overflow");
-        }
+        source_rows = static_cast<size_t>(source_width) * height * clips * 3;
+        output_rows = static_cast<size_t>(chunk_size) * 6 * height;
         groups.push_back({0, 3, width, height, 0, 0, {}, {}, {},
             sigma[0], sigma[1], sigma[2], block_step[0], bm_range[0], ps_num[0], ps_range[0]});
         for (int plane = 0; plane < 3; ++plane) {
@@ -1863,23 +1838,14 @@ static void RollingCreate(
             groups.push_back({plane, 1, plane_width, plane_height, source_rows,
                 output_rows, {}, {}, {}, sigma[plane], 0.0f, 0.0f,
                 block_step[plane], bm_range[plane], ps_num[plane], ps_range[plane]});
-            size_t plane_source_rows = 0;
-            size_t plane_output_rows = 0;
-            size_t updated = 0;
-            if (!checked_mul(static_cast<size_t>(clips) * source_width,
-                    plane_height, plane_source_rows) ||
-                !checked_add(source_rows, plane_source_rows, updated)) {
-                return set_error("rolling buffer size overflow");
-            }
-            source_rows = updated;
+            const size_t plane_source_rows = static_cast<size_t>(clips) *
+                source_width * plane_height;
+            const size_t plane_output_rows = static_cast<size_t>(chunk_size) *
+                2 * plane_height;
+            source_rows += plane_source_rows;
             d->output_plane_rows[plane] = output_rows;
             d->output_step_rows[plane] = static_cast<size_t>(2) * plane_height;
-            if (!checked_mul(static_cast<size_t>(chunk_size) * 2,
-                    plane_height, plane_output_rows) ||
-                !checked_add(output_rows, plane_output_rows, updated)) {
-                return set_error("rolling buffer size overflow");
-            }
-            output_rows = updated;
+            output_rows += plane_output_rows;
         }
     }
     d->source_rows = source_rows;
@@ -1891,30 +1857,24 @@ static void RollingCreate(
         return set_error("device pitch exceeds the supported range");
     d->d_pitch = static_cast<int>(pitch);
     const size_t d_stride = pitch / sizeof(float);
-    if (!checked_mul(d_stride, max_height, temporal_stride) ||
-        !checked_mul(temporal_stride, source_width, source_offset) ||
-        !checked_mul(temporal_stride, static_cast<size_t>(temporal_width) * 2, scratch_offset) ||
-        !checked_mul(source_offset, graph_planes, source_offset) ||
-        !checked_mul(scratch_offset, graph_planes, scratch_offset) ||
+    temporal_stride = d_stride * max_height;
+    source_offset = temporal_stride * source_width * graph_planes;
+    scratch_offset = temporal_stride * temporal_width * 2 * graph_planes;
+    if (
         source_offset > std::numeric_limits<int>::max() ||
         scratch_offset > std::numeric_limits<int>::max()) {
         return set_error("device pitch exceeds CUDA indexing limits");
     }
     const size_t scratch_rows = static_cast<size_t>(graph_planes) * temporal_width * 2 * max_height;
-    size_t scratch_bytes = 0, source_bytes = 0, output_bytes = 0;
-    if (!checked_mul(scratch_rows, pitch, scratch_bytes) ||
-        !checked_mul(source_rows, pitch, source_bytes) ||
-        !checked_mul(output_rows, pitch, output_bytes)) {
-        return set_error("rolling allocation size overflow");
-    }
+    const size_t scratch_bytes = scratch_rows * pitch;
+    const size_t source_bytes = source_rows * pitch;
+    const size_t output_bytes = output_rows * pitch;
     checkError(cuMemAlloc(&d->resource.d_scratch.data, scratch_bytes));
     checkError(cuMemAlloc(&d->resource.d_accum.data, output_bytes));
     checkError(cuMemAllocHost(reinterpret_cast<void **>(&d->resource.h_src.data), source_bytes));
     checkError(cuMemAllocHost(reinterpret_cast<void **>(&d->resource.h_output.data), output_bytes));
     const size_t params_count = 1 + static_cast<size_t>(centers);
-    size_t params_bytes = 0;
-    if (!checked_mul(params_count, sizeof(int), params_bytes))
-        return set_error("rolling parameter size overflow");
+    const size_t params_bytes = params_count * sizeof(int);
     checkError(cuMemAlloc(&d->resource.d_params.data, params_bytes));
     checkError(cuMemAllocHost(reinterpret_cast<void **>(&d->resource.h_params.data), params_bytes));
     checkError(cuStreamCreate(&d->resource.stream.data, CU_STREAM_NON_BLOCKING));
@@ -1948,7 +1908,7 @@ static void RollingCreate(
     cuCtxPopCurrent(nullptr);
     context_pushed = false;
     primary_context_retained = false;
-    vsapi->createFilter(in, out, "BM3Dv2 rolling", RollingInit, RollingGetFrame,
+    vsapi->createFilter(in, out, "BM3Dv2", RollingInit, RollingGetFrame,
         RollingFree, fmParallelRequests, 0, d.release(), core);
     } catch (const std::bad_alloc &) {
         cleanup();

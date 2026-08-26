@@ -122,7 +122,7 @@ extern "C" __global__ void rolling_normalize(
     const size_t image_stride = static_cast<size_t>(height) * stride;
     const size_t offset = static_cast<size_t>(output_plane) *
         2 * image_stride + static_cast<size_t>(y) * stride + x;
-    accum[offset] = __fdiv_rn(accum[offset], accum[offset + image_stride]);
+    accum[offset] /= accum[offset + image_stride];
 }
 
 template <auto transform_impl, int stride=256, int howmany=8, int howmany_stride=32>
