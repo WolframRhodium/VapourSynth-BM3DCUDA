@@ -30,9 +30,15 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
 {bm3dcuda, bm3dcuda_rtc, bm3dcpu}.BM3D(clip clip[, clip ref=None, float[] sigma=3.0, int[] block_step=8, int[] bm_range=9, int radius=0, int[] ps_num=2, int[] ps_range=4, bint chroma=False, int device_id=0, bool fast=True, int extractor_exp=0])
 ```
 
+CUDA and CUDA RTC provide execution selection on `BM3Dv2`:
+
+```python3
+{bm3dcuda, bm3dcuda_rtc}.BM3Dv2(clip[, ..., temporal_mode="rolling", rolling_chunk=4, rolling_cache_chunks=1, rolling_cache_limit=16])
+```
+
 - clip:
 
-    The input clip. Must be of 32 bit float format. Each plane is denoised separately if `chroma` is set to `False`. Data of unprocessed planes is undefined. Frame properties of the output clip are copied from it.
+    The input clip. Must be of 32 bit float format. Each plane is denoised separately if `chroma` is set to `False`. Data of unprocessed planes is undefined for the public intermediate-frame path; rolling `BM3Dv2` copies them from the source. Frame properties of the output clip are copied from it.
 
 - ref:
 
@@ -111,9 +117,72 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
 
     Default `0`. (non-determinism)
 
+- temporal_mode, rolling_chunk, rolling_cache_chunks, rolling_cache_limit:
+
+    `temporal_mode` selects temporal execution for `radius > 0`. `"rolling"`
+    is the default and uses one CUDA stream and one resource set to build
+    aligned output chunks. `"legacy"` composes public `BM3D` and
+    `VAggregate`. These are the only accepted temporal modes. `fast` is
+    accepted in rolling mode for API compatibility but has no effect.
+
+    `rolling_chunk` sets the rolling chunk size in the range `[1, 64]` and
+    defaults to `4`. It may only be supplied with `temporal_mode="rolling"`.
+    Rolling mode requires `radius > 0`.
+
+    `rolling_cache_chunks` sets the number of completed chunks retained in the
+    rolling output cache, in the range `[1, 64]`, and defaults to `1`. It may
+    only be supplied with `temporal_mode="rolling"`. A value greater than one
+    keeps an LRU cache of final VapourSynth frames for random access; it does
+    not allocate another CUDA resource, stream, or graph and does not add GPU
+    work on cache hits. The tradeoff is host frame memory proportional to
+    `rolling_chunk * rolling_cache_chunks` (plus normal VapourSynth frame
+    overhead).
+
+    `rolling_cache_limit` bounds adaptive cache growth in the range `[1, 64]`
+    and defaults to `16`. When `rolling_cache_chunks` is omitted, rolling
+    grows its cache up to this limit after repeated chunk reuse. Supplying
+    `rolling_cache_chunks` explicitly keeps a fixed cache size unless a larger
+    `rolling_cache_limit` is also requested.
+
 ## Notes
 
 - `bm3d.VAggregate` should be called after temporal filtering, as in `VapourSynth-BM3D`. Alternatively, you may use the `BM3Dv2()` interface for both spatial and temporal denoising in one step.
+
+- For CUDA and CUDA RTC, `BM3Dv2(radius > 0)` uses rolling temporal BM3D and
+  final GPU aggregation by default. The public `BM3D(radius > 0)` and
+  `VAggregate` interfaces retain their existing intermediate-frame behavior.
+
+- CUDA rolling chunks are aligned by
+  `floor(frame / rolling_chunk) * rolling_chunk`. The filter retains one
+  completed chunk of final VapourSynth frames by default. Requests inside that
+  cache are hits; a request outside it recomputes the aligned chunk. Set
+  `rolling_cache_chunks > 1` to retain several completed chunks in an LRU
+  cache and reduce repeated work for bounded random-access working sets. A
+  partial final chunk uses replicated end frames internally and caches only
+  valid output frames.
+
+- Rolling uploads one `rolling_chunk + 4 * radius` source slab (and one
+  reference slab for final estimation), computes
+  `rolling_chunk + 2 * radius` temporal centers in order, and transfers only
+  normalized output frames to the host. Larger chunks amortize halo work but
+  increase GPU accumulators, pinned staging memory, retained frame memory, and
+  latency for a random-access miss.
+
+- For mostly linear rendering, `rolling_chunk=16, rolling_cache_chunks=1`
+  favors throughput. For interactive access or a small downstream temporal
+  window, `rolling_chunk=4, rolling_cache_chunks=2` is a lower-latency starting
+  point. Fully unpredictable random access can still cause rolling chunk
+  misses; increase `rolling_cache_limit` when the working set is bounded.
+
+- RTC rolling uses one device resource, one stream, and one Driver API graph.
+  A completed chunk is retained in a frame cache by default; cache misses
+  stage the source/reference halo, serialize graph execution, and insert the
+  result into the bounded LRU cache. `rolling_cache_chunks` changes only the
+  number of retained final chunks.
+  `fast` is accepted for API compatibility but does not change rolling's
+  resource count. Partial final chunks cache only valid output frames.
+
+- `VAggregate(planes=...)` accepts each plane at most once. Plane indices must be non-negative and smaller than the number of planes in `src`.
 
 - The `_rtc` version has three additional experimental parameters:
 
@@ -149,6 +218,13 @@ The `cpu` version does not require any external libraries but requires AVX2 supp
 GPU memory consumptions:
 
 `(ref ? 4 : 3) * (chroma ? 3 : 1) * (fast ? 4 : 1) * (2 * radius + 1) * size_of_a_single_frame`
+
+For the rolling CUDA/RTC `BM3Dv2(radius > 0)` path, one stream holds a
+source slab, one `2 * radius + 1`-slice scratch result, and
+`rolling_chunk` weighted accumulators. Pinned host memory holds the source slab
+and normalized chunk outputs. The filter additionally retains
+`rolling_cache_chunks * rolling_chunk` normal VapourSynth output frames (or
+fewer for the final partial chunk).
 
 ## Compilation
 - The CMake configuration of `BM3DCUDA_RTC` links to NVRTC static library by default, which requires CUDA 11.5 or later.
