@@ -1795,45 +1795,11 @@ static void VS_CC BM3Dv2Create(
         return ;
     }
 
-    if (radius > 0) {
+    if (radius > 0 && temporal_mode == "rolling") {
         vsapi->freeNode(src);
-        if (temporal_mode == "rolling") {
-            RollingCreate(
-                in, out, rolling_chunk, rolling_cache_chunks,
-                rolling_cache_limit, cache_adaptive, core, vsapi);
-        } else {
-            auto plugin = vsapi->getPluginById(PLUGIN_ID, core);
-            VSMap * bm3d_in = copy_bm3d_args(in, vsapi);
-
-            auto map = vsapi->invoke(plugin, "BM3D", bm3d_in);
-            vsapi->freeMap(bm3d_in);
-            if (auto invoke_error = vsapi->getError(map); invoke_error) {
-                vsapi->setError(out, invoke_error);
-                vsapi->freeMap(map);
-                return;
-            }
-
-            VSNodeRef * original = vsapi->propGetNode(in, "clip", 0, nullptr);
-            vsapi->propSetNode(map, "src", original, paReplace);
-            vsapi->freeNode(original);
-            for (int plane = 0; plane < source_planes; ++plane) {
-                if (process[plane]) {
-                    vsapi->propSetInt(map, "planes", plane, paAppend);
-                }
-            }
-
-            auto aggregate = vsapi->invoke(plugin, "VAggregate", map);
-            vsapi->freeMap(map);
-            if (auto invoke_error = vsapi->getError(aggregate); invoke_error) {
-                vsapi->setError(out, invoke_error);
-                vsapi->freeMap(aggregate);
-                return;
-            }
-            auto node = vsapi->propGetNode(aggregate, "clip", 0, nullptr);
-            vsapi->freeMap(aggregate);
-            vsapi->propSetNode(out, "clip", node, paReplace);
-            vsapi->freeNode(node);
-        }
+        RollingCreate(
+            in, out, rolling_chunk, rolling_cache_chunks,
+            rolling_cache_limit, cache_adaptive, core, vsapi);
         return;
     }
 
@@ -1861,7 +1827,7 @@ static void VS_CC BM3Dv2Create(
     vsapi->propSetNode(map, "src", src, paReplace);
     vsapi->freeNode(src);
 
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < source_planes; ++i) {
         if (process[i]) {
             vsapi->propSetInt(map, "planes", i, paAppend);
         }

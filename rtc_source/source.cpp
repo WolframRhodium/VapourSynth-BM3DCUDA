@@ -1396,11 +1396,15 @@ struct RollingData {
             return *this;
         }
 
-        ~CacheChunk() noexcept { release(); }
+        ~CacheChunk() noexcept {
+            release();
+        }
 
     private:
         void release() noexcept {
-            if (!vsapi) return;
+            if (!vsapi) {
+                return;
+            }
             for (const VSFrameRef * frame : frames) {
                 vsapi->freeFrame(frame);
             }
@@ -1411,8 +1415,12 @@ struct RollingData {
     int cache_reuse_events {};
 
     ~RollingData() noexcept {
-        if (node) vsapi->freeNode(node);
-        if (ref_node) vsapi->freeNode(ref_node);
+        if (node) {
+            vsapi->freeNode(node);
+        }
+        if (ref_node) {
+            vsapi->freeNode(ref_node);
+        }
     }
 };
 
@@ -1429,10 +1437,14 @@ static const VSFrameRef * rolling_cache_get(
 ) {
     if (d->cache_chunks.load(std::memory_order_relaxed) == 1) {
         std::shared_lock lock { d->cache_lock };
-        if (d->cached_chunks.empty()) return nullptr;
+        if (d->cached_chunks.empty()) {
+            return nullptr;
+        }
         const auto & cache = d->cached_chunks.front();
         const int offset = n - cache.start;
-        if (offset < 0 || offset >= std::ssize(cache.frames)) return nullptr;
+        if (offset < 0 || offset >= std::ssize(cache.frames)) {
+            return nullptr;
+        }
         return vsapi->cloneFrameRef(cache.frames[offset]);
     }
 
@@ -1440,7 +1452,9 @@ static const VSFrameRef * rolling_cache_get(
     for (auto it = d->cached_chunks.begin(); it != d->cached_chunks.end();
         ++it) {
         const int offset = n - it->start;
-        if (offset < 0 || offset >= std::ssize(it->frames)) continue;
+        if (offset < 0 || offset >= std::ssize(it->frames)) {
+            continue;
+        }
         if (std::next(it) != d->cached_chunks.end()) {
             d->cached_chunks.splice(
                 d->cached_chunks.end(), d->cached_chunks, it);
@@ -1454,7 +1468,9 @@ static const VSFrameRef * rolling_cache_get(
 static void rolling_cache_maybe_grow(
     RollingData * d, int chunk_start
 ) {
-    if (!d->cache_adaptive) return;
+    if (!d->cache_adaptive) {
+        return;
+    }
 
     std::unique_lock lock { d->cache_lock };
     if (d->cache_chunks.load(std::memory_order_relaxed) >= d->cache_limit) {
@@ -1462,9 +1478,13 @@ static void rolling_cache_maybe_grow(
     }
     const auto evicted = std::find(
         d->evicted_chunks.begin(), d->evicted_chunks.end(), chunk_start);
-    if (evicted == d->evicted_chunks.end()) return;
+    if (evicted == d->evicted_chunks.end()) {
+        return;
+    }
     d->evicted_chunks.erase(evicted);
-    if (++d->cache_reuse_events < 2) return;
+    if (++d->cache_reuse_events < 2) {
+        return;
+    }
     d->cache_reuse_events = 0;
     d->cache_chunks.fetch_add(1, std::memory_order_relaxed);
 }
@@ -1487,20 +1507,28 @@ static const VSFrameRef * RollingGetFrameImpl(
             chunk_start + d->chunk_size - 1 + 2LL * d->radius, clip_last);
         for (int64_t frame = first; frame <= last; ++frame) {
             vsapi->requestFrameFilter(static_cast<int>(frame), d->node, frameCtx);
-            if (d->final_) vsapi->requestFrameFilter(
-                static_cast<int>(frame), d->ref_node, frameCtx);
+            if (d->final_) {
+                vsapi->requestFrameFilter(
+                    static_cast<int>(frame), d->ref_node, frameCtx);
+            }
         }
         return nullptr;
     }
     if (activationReason == arError) {
         return nullptr;
     }
-    if (activationReason != arAllFramesReady) return nullptr;
+    if (activationReason != arAllFramesReady) {
+        return nullptr;
+    }
 
-    if (const VSFrameRef * cached = rolling_cache_get(d, n, vsapi)) return cached;
+    if (const VSFrameRef * cached = rolling_cache_get(d, n, vsapi)) {
+        return cached;
+    }
 
     std::unique_lock resource_guard { d->resource_lock };
-    if (const VSFrameRef * cached = rolling_cache_get(d, n, vsapi)) return cached;
+    if (const VSFrameRef * cached = rolling_cache_get(d, n, vsapi)) {
+        return cached;
+    }
     const int64_t chunk_start_64 =
         static_cast<int64_t>(n / d->chunk_size) * d->chunk_size;
     const int chunk_start = static_cast<int>(chunk_start_64);
@@ -1515,7 +1543,9 @@ static const VSFrameRef * RollingGetFrameImpl(
         return set_error("'cuCtxPushCurrent(d->context)' failed: "s + error_string);
     }
     struct ContextGuard {
-        ~ContextGuard() noexcept { cuCtxPopCurrent(nullptr); }
+        ~ContextGuard() noexcept {
+            cuCtxPopCurrent(nullptr);
+        }
     } context_guard;
     const int64_t clip_last = static_cast<int64_t>(d->vi->numFrames) - 1;
     const int valid_outputs = static_cast<int>(std::min<int64_t>(
@@ -1538,38 +1568,52 @@ static const VSFrameRef * RollingGetFrameImpl(
     for (int64_t frame = first_frame; frame <= last_frame; ++frame) {
         source_frames.emplace_back(vsapi->getFrameFilter(
             static_cast<int>(frame), d->node, frameCtx), vsapi->freeFrame);
-        if (d->final_) reference_frames.emplace_back(
-            vsapi->getFrameFilter(
-                static_cast<int>(frame), d->ref_node, frameCtx),
-            vsapi->freeFrame);
+        if (d->final_) {
+            reference_frames.emplace_back(
+                vsapi->getFrameFilter(
+                    static_cast<int>(frame), d->ref_node, frameCtx),
+                vsapi->freeFrame);
+        }
     }
 
     RollingResource & resource = d->resource;
     const int d_stride = d->d_pitch / sizeof(float);
-    auto stage_plane = [&](float * & dst, const std::vector<FramePtr> & frames,
-                           int plane, int plane_height) {
+    auto stage_plane = [&] (
+        float * & dst, const std::vector<FramePtr> & frames,
+        int plane, int plane_height
+    ) {
         const int plane_width = vsapi->getFrameWidth(frames.front().get(), plane);
         const int source_pitch = vsapi->getStride(frames.front().get(), plane);
         for (int logical = 0; logical < logical_source_width; ++logical) {
             const int frame = static_cast<int>(std::clamp<int64_t>(
                 logical_first + logical, 0, clip_last));
             const VSFrameRef * source = frames[frame - first_frame].get();
-            vs_bitblt(dst, d->d_pitch, vsapi->getReadPtr(source, plane), source_pitch,
+            vs_bitblt(
+                dst, d->d_pitch, vsapi->getReadPtr(source, plane), source_pitch,
                 plane_width * sizeof(float), plane_height);
             dst += static_cast<size_t>(d_stride) * plane_height;
         }
     };
     float * h_dst = resource.h_src;
     if (d->chroma) {
-        if (d->final_) for (int plane = 0; plane < 3; ++plane)
-            stage_plane(h_dst, reference_frames, plane, d->vi->height);
-        for (int plane = 0; plane < 3; ++plane)
+        if (d->final_) {
+            for (int plane = 0; plane < 3; ++plane) {
+                stage_plane(h_dst, reference_frames, plane, d->vi->height);
+            }
+        }
+        for (int plane = 0; plane < 3; ++plane) {
             stage_plane(h_dst, source_frames, plane, d->vi->height);
+        }
     } else {
         for (int plane = 0; plane < d->vi->format->numPlanes; ++plane) {
-            if (!d->process[plane]) continue;
-            const int plane_height = plane ? d->vi->height >> d->vi->format->subSamplingH : d->vi->height;
-            if (d->final_) stage_plane(h_dst, reference_frames, plane, plane_height);
+            if (!d->process[plane]) {
+                continue;
+            }
+            const int plane_height = plane ?
+                d->vi->height >> d->vi->format->subSamplingH : d->vi->height;
+            if (d->final_) {
+                stage_plane(h_dst, reference_frames, plane, plane_height);
+            }
             stage_plane(h_dst, source_frames, plane, plane_height);
         }
     }
@@ -1598,7 +1642,9 @@ static const VSFrameRef * RollingGetFrameImpl(
             d->vi->format, d->vi->width, d->vi->height,
             plane_sources, planes, source, core);
         for (int plane = 0; plane < d->vi->format->numPlanes; ++plane) {
-            if (!d->process[plane]) continue;
+            if (!d->process[plane]) {
+                continue;
+            }
             const int plane_width = vsapi->getFrameWidth(source, plane);
             const int plane_height = vsapi->getFrameHeight(source, plane);
             const size_t row = d->output_plane_rows[plane] +
@@ -1653,7 +1699,9 @@ static const VSFrameRef *VS_CC RollingGetFrame(
     return nullptr;
 }
 
-static void VS_CC RollingFree(void *instanceData, VSCore *, const VSAPI *vsapi) noexcept {
+static void VS_CC RollingFree(
+    void *instanceData, VSCore *, const VSAPI *vsapi
+) noexcept {
     auto d = static_cast<RollingData *>(instanceData);
     std::list<RollingData::CacheChunk> cached;
     {
@@ -1691,225 +1739,354 @@ static void RollingCreate(
     };
 
     try {
-    d = std::make_unique<RollingData>();
-    d->vsapi = vsapi;
-    d->cache_chunks.store(cache_chunks, std::memory_order_relaxed);
-    d->cache_limit = cache_limit;
-    d->cache_adaptive = cache_adaptive;
-    const auto set_error = [&](const std::string & message) {
-        vsapi->setError(out, ("BM3Dv2 rolling: " + message).c_str());
-        cleanup();
-    };
-    d->node = vsapi->propGetNode(in, "clip", 0, nullptr);
-    d->vi = vsapi->getVideoInfo(d->node);
-    const int width = d->vi->width;
-    const int height = d->vi->height;
-    if (!isConstantFormat(d->vi) || d->vi->format->sampleType == stInteger ||
-        d->vi->format->bitsPerSample != 32) {
-        return set_error("only constant format 32bit float input supported");
-    }
-    int error;
-    d->ref_node = vsapi->propGetNode(in, "ref", 0, &error);
-    if (error) {
-        d->final_ = false;
-    } else {
-        const VSVideoInfo * ref_vi = vsapi->getVideoInfo(d->ref_node);
-        if (ref_vi->format->id != d->vi->format->id || ref_vi->width != width ||
-            ref_vi->height != height || ref_vi->numFrames != d->vi->numFrames) {
-            return set_error("\"ref\" must match clip format, dimensions, and frame count");
+        d = std::make_unique<RollingData>();
+        d->vsapi = vsapi;
+        d->cache_chunks.store(cache_chunks, std::memory_order_relaxed);
+        d->cache_limit = cache_limit;
+        d->cache_adaptive = cache_adaptive;
+        const auto set_error = [&](const std::string & message) {
+            vsapi->setError(out, ("BM3Dv2 rolling: " + message).c_str());
+            cleanup();
+        };
+        d->node = vsapi->propGetNode(in, "clip", 0, nullptr);
+        d->vi = vsapi->getVideoInfo(d->node);
+        const int width = d->vi->width;
+        const int height = d->vi->height;
+        if (
+            !isConstantFormat(d->vi) ||
+            d->vi->format->sampleType == stInteger ||
+            d->vi->format->bitsPerSample != 32
+        ) {
+            return set_error("only constant format 32bit float input supported");
         }
-        d->final_ = true;
-    }
-    float sigma[3];
-    for (int plane = 0; plane < 3; ++plane) {
-        sigma[plane] = static_cast<float>(vsapi->propGetFloat(in, "sigma", plane, &error));
-        if (error) sigma[plane] = plane ? sigma[plane - 1] : 3.0f;
-        else if (sigma[plane] < 0.0f) return set_error("\"sigma\" must be non-negative");
-        d->process[plane] = sigma[plane] >= std::numeric_limits<float>::epsilon();
-        sigma[plane] *= (3.0f / 4.0f) / 255.0f * 64.0f * (d->final_ ? 1.0f : 2.7f);
-    }
-    for (int plane = 0; plane < 3; ++plane) {
-        auto value = vsapi->propGetData(in, "bm_error_s", plane, &error);
-        d->bm_error_s[plane] = error ? (plane ? d->bm_error_s[plane - 1] : "ssd") :
-            std::string { value ? value : "" };
-        std::transform(d->bm_error_s[plane].begin(), d->bm_error_s[plane].end(),
-            d->bm_error_s[plane].begin(), [](unsigned char c) { return std::tolower(c); });
-        if (d->bm_error_s[plane] == "ssd/norm") d->bm_error_s[plane] = "ssd_norm";
-        if (d->bm_error_s[plane] != "ssd" && d->bm_error_s[plane] != "sad" &&
-            d->bm_error_s[plane] != "zssd" && d->bm_error_s[plane] != "zsad" &&
-            d->bm_error_s[plane] != "ssd_norm") return set_error("invalid 'bm_error_s': " + d->bm_error_s[plane]);
-        value = vsapi->propGetData(in, "transform_2d_s", plane, &error);
-        d->transform_2d_s[plane] = error ? (plane ? d->transform_2d_s[plane - 1] : "dct") :
-            std::string { value ? value : "" };
-        std::transform(d->transform_2d_s[plane].begin(), d->transform_2d_s[plane].end(),
-            d->transform_2d_s[plane].begin(), [](unsigned char c) { return std::tolower(c); });
-        if (d->transform_2d_s[plane] == "bior1.5") d->transform_2d_s[plane] = "bior1_5";
-        if (d->transform_2d_s[plane] != "dct" && d->transform_2d_s[plane] != "haar" &&
-            d->transform_2d_s[plane] != "wht" && d->transform_2d_s[plane] != "bior1_5") return set_error("invalid 'transform_2d_s': " + d->transform_2d_s[plane]);
-        value = vsapi->propGetData(in, "transform_1d_s", plane, &error);
-        d->transform_1d_s[plane] = error ? (plane ? d->transform_1d_s[plane - 1] : "dct") :
-            std::string { value ? value : "" };
-        std::transform(d->transform_1d_s[plane].begin(), d->transform_1d_s[plane].end(),
-            d->transform_1d_s[plane].begin(), [](unsigned char c) { return std::tolower(c); });
-        if (d->transform_1d_s[plane] == "bior1.5") d->transform_1d_s[plane] = "bior1_5";
-        if (d->transform_1d_s[plane] != "dct" && d->transform_1d_s[plane] != "haar" &&
-            d->transform_1d_s[plane] != "wht" && d->transform_1d_s[plane] != "bior1_5") return set_error("invalid 'transform_1d_s': " + d->transform_1d_s[plane]);
-    }
-    int block_step[3], bm_range[3], ps_num[3], ps_range[3];
-    for (int plane = 0; plane < 3; ++plane) {
-        block_step[plane] = int64ToIntS(vsapi->propGetInt(in, "block_step", plane, &error));
-        if (error) block_step[plane] = plane ? block_step[plane - 1] : 8;
-        else if (block_step[plane] <= 0 || block_step[plane] > 8) return set_error("\"block_step\" must be in range [1, 8]");
-        bm_range[plane] = int64ToIntS(vsapi->propGetInt(in, "bm_range", plane, &error));
-        if (error) bm_range[plane] = plane ? bm_range[plane - 1] : 9;
-        else if (bm_range[plane] <= 0) return set_error("\"bm_range\" must be positive");
-        ps_num[plane] = int64ToIntS(vsapi->propGetInt(in, "ps_num", plane, &error));
-        if (error) ps_num[plane] = plane ? ps_num[plane - 1] : 2;
-        else if (ps_num[plane] <= 0 || ps_num[plane] > 8) return set_error("\"ps_num\" must be in range [1, 8]");
-        ps_range[plane] = int64ToIntS(vsapi->propGetInt(in, "ps_range", plane, &error));
-        if (error) ps_range[plane] = plane ? ps_range[plane - 1] : 4;
-        else if (ps_range[plane] <= 0) return set_error("\"ps_range\" must be positive");
-    }
-    d->radius = int64ToIntS(vsapi->propGetInt(in, "radius", 0, &error));
-    if (error) d->radius = 0;
-    if (d->radius <= 0) return set_error("\"radius\" must be positive");
-    if (d->radius > (std::numeric_limits<int>::max() - chunk_size) / 4)
-        return set_error("\"radius\" is too large for rolling temporal processing");
-    d->chunk_size = chunk_size;
-    d->chroma = !!vsapi->propGetInt(in, "chroma", 0, &error);
-    if (error) d->chroma = false;
-    if (d->chroma && d->vi->format->id != pfYUV444PS)
-        return set_error("clip format must be YUV444 when \"chroma\" is true");
-    const int device_id = [&] {
-        const int value = int64ToIntS(vsapi->propGetInt(in, "device_id", 0, &error));
-        return error ? 0 : value;
-    }();
-    checkError(cuInit(0));
-    int device_count;
-    checkError(cuDeviceGetCount(&device_count));
-    if (device_id < 0 || device_id >= device_count)
-        return set_error("invalid device ID (" + std::to_string(device_id) + ")");
-    checkError(cuDeviceGet(&d->device, device_id));
-    checkError(cuDevicePrimaryCtxRetain(&d->context, d->device));
-    primary_context_retained = true;
-    checkError(cuCtxPushCurrent(d->context));
-    context_pushed = true;
-    const float extractor = [&] {
-        const int exponent = int64ToIntS(vsapi->propGetInt(in, "extractor_exp", 0, &error));
-        return error ? 0.0f : (exponent ? std::ldexp(1.0f, exponent) : 0.0f);
-    }();
-    std::vector<RollingGroup> groups;
-    const int source_width = chunk_size + 4 * d->radius;
-    const int temporal_width = 2 * d->radius + 1;
-    const int centers = chunk_size + 2 * d->radius;
-    const int clips = d->final_ ? 2 : 1;
-    const int graph_planes = d->chroma ? 3 : 1;
-    const int max_width = d->process[0] ? width : width >> d->vi->format->subSamplingW;
-    const int max_height = d->process[0] ? height : height >> d->vi->format->subSamplingH;
-    int process_mask = 0;
-    for (int plane = 0; plane < d->vi->format->numPlanes; ++plane) {
-        process_mask |= static_cast<int>(d->process[plane]) << plane;
-    }
-    if (max_width > std::numeric_limits<int>::max() - 255 || max_height > 65535)
-        return set_error("clip dimensions exceed CUDA grid limits");
-    size_t temporal_stride = static_cast<size_t>(max_width) * max_height;
-    size_t source_offset = temporal_stride * source_width * graph_planes;
-    size_t scratch_offset = temporal_stride * temporal_width * 2 * graph_planes;
-    if (
-        source_offset > std::numeric_limits<int>::max() ||
-        scratch_offset > std::numeric_limits<int>::max()) {
-        return set_error("clip dimensions exceed CUDA indexing limits");
-    }
-    size_t source_rows = 0, output_rows = 0;
-    if (d->chroma) {
-        source_rows = static_cast<size_t>(source_width) * height * clips * 3;
-        output_rows = static_cast<size_t>(chunk_size) * 6 * height;
-        groups.push_back({0, 3, width, height, 0, 0, {}, {}, {},
-            sigma[0], sigma[1], sigma[2], block_step[0], bm_range[0], ps_num[0], ps_range[0]});
+        int error;
+        d->ref_node = vsapi->propGetNode(in, "ref", 0, &error);
+        if (error) {
+            d->final_ = false;
+        } else {
+            const VSVideoInfo * ref_vi = vsapi->getVideoInfo(d->ref_node);
+            if (
+                ref_vi->format->id != d->vi->format->id ||
+                ref_vi->width != width || ref_vi->height != height ||
+                ref_vi->numFrames != d->vi->numFrames
+            ) {
+                return set_error(
+                    "\"ref\" must match clip format, dimensions, and frame count");
+            }
+            d->final_ = true;
+        }
+        float sigma[3];
         for (int plane = 0; plane < 3; ++plane) {
-            d->output_plane_rows[plane] = static_cast<size_t>(plane) * 2 * height;
-            d->output_step_rows[plane] = static_cast<size_t>(6) * height;
+            sigma[plane] = static_cast<float>(
+                vsapi->propGetFloat(in, "sigma", plane, &error));
+            if (error) {
+                sigma[plane] = plane ? sigma[plane - 1] : 3.0f;
+            } else if (sigma[plane] < 0.0f) {
+                return set_error("\"sigma\" must be non-negative");
+            }
+            d->process[plane] = sigma[plane] >=
+                std::numeric_limits<float>::epsilon();
+            sigma[plane] *= (3.0f / 4.0f) / 255.0f * 64.0f *
+                (d->final_ ? 1.0f : 2.7f);
         }
-    } else {
-        for (int plane = 0; plane < d->vi->format->numPlanes; ++plane) {
-            if (!d->process[plane]) continue;
-            const int plane_width = plane ? width >> d->vi->format->subSamplingW : width;
-            const int plane_height = plane ? height >> d->vi->format->subSamplingH : height;
-            groups.push_back({plane, 1, plane_width, plane_height, source_rows,
-                output_rows, {}, {}, {}, sigma[plane], 0.0f, 0.0f,
-                block_step[plane], bm_range[plane], ps_num[plane], ps_range[plane]});
-            const size_t plane_source_rows = static_cast<size_t>(clips) *
-                source_width * plane_height;
-            const size_t plane_output_rows = static_cast<size_t>(chunk_size) *
-                2 * plane_height;
-            source_rows += plane_source_rows;
-            d->output_plane_rows[plane] = output_rows;
-            d->output_step_rows[plane] = static_cast<size_t>(2) * plane_height;
-            output_rows += plane_output_rows;
-        }
-    }
-    d->source_rows = source_rows;
-    d->output_rows = output_rows;
-    const size_t pitch_min = static_cast<size_t>(max_width) * sizeof(float);
-    size_t pitch;
-    checkError(cuMemAllocPitch(&d->resource.d_src.data, &pitch, pitch_min, source_rows, 4));
-    if (pitch > static_cast<size_t>(std::numeric_limits<int>::max()) || pitch % sizeof(float))
-        return set_error("device pitch exceeds the supported range");
-    d->d_pitch = static_cast<int>(pitch);
-    const size_t d_stride = pitch / sizeof(float);
-    temporal_stride = d_stride * max_height;
-    source_offset = temporal_stride * source_width * graph_planes;
-    scratch_offset = temporal_stride * temporal_width * 2 * graph_planes;
-    if (
-        source_offset > std::numeric_limits<int>::max() ||
-        scratch_offset > std::numeric_limits<int>::max()) {
-        return set_error("device pitch exceeds CUDA indexing limits");
-    }
-    const size_t scratch_rows = static_cast<size_t>(graph_planes) * temporal_width * 2 * max_height;
-    const size_t scratch_bytes = scratch_rows * pitch;
-    const size_t source_bytes = source_rows * pitch;
-    const size_t output_bytes = output_rows * pitch;
-    checkError(cuMemAlloc(&d->resource.d_scratch.data, scratch_bytes));
-    checkError(cuMemAlloc(&d->resource.d_accum.data, output_bytes));
-    checkError(cuMemAllocHost(reinterpret_cast<void **>(&d->resource.h_src.data), source_bytes));
-    checkError(cuMemAllocHost(reinterpret_cast<void **>(&d->resource.h_output.data), output_bytes));
-    const size_t params_count = 1 + static_cast<size_t>(centers);
-    const size_t params_bytes = params_count * sizeof(int);
-    checkError(cuMemAlloc(&d->resource.d_params.data, params_bytes));
-    checkError(cuMemAllocHost(reinterpret_cast<void **>(&d->resource.h_params.data), params_bytes));
-    checkError(cuStreamCreate(&d->resource.stream.data, CU_STREAM_NON_BLOCKING));
+        for (int plane = 0; plane < 3; ++plane) {
+            auto value = vsapi->propGetData(in, "bm_error_s", plane, &error);
+            d->bm_error_s[plane] = error ?
+                (plane ? d->bm_error_s[plane - 1] : "ssd") :
+                std::string { value ? value : "" };
+            std::transform(
+                d->bm_error_s[plane].begin(), d->bm_error_s[plane].end(),
+                d->bm_error_s[plane].begin(),
+                [](unsigned char c) { return std::tolower(c); });
+            if (d->bm_error_s[plane] == "ssd/norm") {
+                d->bm_error_s[plane] = "ssd_norm";
+            }
+            if (
+                d->bm_error_s[plane] != "ssd" &&
+                d->bm_error_s[plane] != "sad" &&
+                d->bm_error_s[plane] != "zssd" &&
+                d->bm_error_s[plane] != "zsad" &&
+                d->bm_error_s[plane] != "ssd_norm"
+            ) {
+                return set_error(
+                    "invalid 'bm_error_s': " + d->bm_error_s[plane]);
+            }
 
-    for (auto & group : groups) {
-        const int plane = group.first_plane;
-        const auto result = compile(
-            group.width, group.height, d->d_pitch / sizeof(float),
-            group.sigma, group.block_step, group.bm_range,
-            d->radius, group.ps_num, group.ps_range,
-            d->chroma, d->chroma ? sigma[1] : 0.0f, d->chroma ? sigma[2] : 0.0f,
-            d->final_, true,
-            d->bm_error_s[plane], d->transform_2d_s[plane], d->transform_1d_s[plane],
-            extractor, d->device);
-        if (std::holds_alternative<std::string>(result)) return set_error(std::get<std::string>(result));
-        d->modules[plane] = std::get<CUmodule>(result);
-        checkError(cuModuleGetFunction(&group.bm3d, d->modules[plane], "bm3d"));
-        checkError(cuModuleGetFunction(&group.scatter, d->modules[plane], "rolling_scatter"));
-        checkError(cuModuleGetFunction(&group.normalize, d->modules[plane], "rolling_normalize"));
-    }
-    const auto graph = get_rolling_graphexec(
-        d->resource.d_accum, d->resource.d_scratch, d->resource.d_src,
-        d->resource.h_src, d->resource.h_output, d->resource.d_params,
-        d->resource.h_params, width, height, d->d_pitch / sizeof(float),
-        block_step, d->radius, chunk_size,
-        process_mask,
-        d->vi->format->numPlanes, d->vi->format->subSamplingW,
-        d->vi->format->subSamplingH, d->chroma, d->final_, extractor, d->context, groups);
-    if (std::holds_alternative<std::string>(graph)) return set_error(std::get<std::string>(graph));
-    d->resource.graphexec = std::get<CUgraphExec>(graph);
-    cuCtxPopCurrent(nullptr);
-    context_pushed = false;
-    primary_context_retained = false;
-    vsapi->createFilter(in, out, "BM3Dv2", RollingInit, RollingGetFrame,
-        RollingFree, fmParallelRequests, 0, d.release(), core);
+            value = vsapi->propGetData(in, "transform_2d_s", plane, &error);
+            d->transform_2d_s[plane] = error ?
+                (plane ? d->transform_2d_s[plane - 1] : "dct") :
+                std::string { value ? value : "" };
+            std::transform(
+                d->transform_2d_s[plane].begin(),
+                d->transform_2d_s[plane].end(),
+                d->transform_2d_s[plane].begin(),
+                [](unsigned char c) { return std::tolower(c); });
+            if (d->transform_2d_s[plane] == "bior1.5") {
+                d->transform_2d_s[plane] = "bior1_5";
+            }
+            if (
+                d->transform_2d_s[plane] != "dct" &&
+                d->transform_2d_s[plane] != "haar" &&
+                d->transform_2d_s[plane] != "wht" &&
+                d->transform_2d_s[plane] != "bior1_5"
+            ) {
+                return set_error(
+                    "invalid 'transform_2d_s': " + d->transform_2d_s[plane]);
+            }
+
+            value = vsapi->propGetData(in, "transform_1d_s", plane, &error);
+            d->transform_1d_s[plane] = error ?
+                (plane ? d->transform_1d_s[plane - 1] : "dct") :
+                std::string { value ? value : "" };
+            std::transform(
+                d->transform_1d_s[plane].begin(),
+                d->transform_1d_s[plane].end(),
+                d->transform_1d_s[plane].begin(),
+                [](unsigned char c) { return std::tolower(c); });
+            if (d->transform_1d_s[plane] == "bior1.5") {
+                d->transform_1d_s[plane] = "bior1_5";
+            }
+            if (
+                d->transform_1d_s[plane] != "dct" &&
+                d->transform_1d_s[plane] != "haar" &&
+                d->transform_1d_s[plane] != "wht" &&
+                d->transform_1d_s[plane] != "bior1_5"
+            ) {
+                return set_error(
+                    "invalid 'transform_1d_s': " + d->transform_1d_s[plane]);
+            }
+        }
+
+        int block_step[3];
+        int bm_range[3];
+        int ps_num[3];
+        int ps_range[3];
+        for (int plane = 0; plane < 3; ++plane) {
+            block_step[plane] = int64ToIntS(
+                vsapi->propGetInt(in, "block_step", plane, &error));
+            if (error) {
+                block_step[plane] = plane ? block_step[plane - 1] : 8;
+            } else if (block_step[plane] <= 0 || block_step[plane] > 8) {
+                return set_error("\"block_step\" must be in range [1, 8]");
+            }
+
+            bm_range[plane] = int64ToIntS(
+                vsapi->propGetInt(in, "bm_range", plane, &error));
+            if (error) {
+                bm_range[plane] = plane ? bm_range[plane - 1] : 9;
+            } else if (bm_range[plane] <= 0) {
+                return set_error("\"bm_range\" must be positive");
+            }
+
+            ps_num[plane] = int64ToIntS(
+                vsapi->propGetInt(in, "ps_num", plane, &error));
+            if (error) {
+                ps_num[plane] = plane ? ps_num[plane - 1] : 2;
+            } else if (ps_num[plane] <= 0 || ps_num[plane] > 8) {
+                return set_error("\"ps_num\" must be in range [1, 8]");
+            }
+
+            ps_range[plane] = int64ToIntS(
+                vsapi->propGetInt(in, "ps_range", plane, &error));
+            if (error) {
+                ps_range[plane] = plane ? ps_range[plane - 1] : 4;
+            } else if (ps_range[plane] <= 0) {
+                return set_error("\"ps_range\" must be positive");
+            }
+        }
+
+        d->radius = int64ToIntS(vsapi->propGetInt(in, "radius", 0, &error));
+        if (error) {
+            d->radius = 0;
+        }
+        if (d->radius <= 0) {
+            return set_error("\"radius\" must be positive");
+        }
+        if (d->radius >
+            (std::numeric_limits<int>::max() - chunk_size) / 4) {
+            return set_error("\"radius\" is too large for rolling temporal processing");
+        }
+        d->chunk_size = chunk_size;
+
+        d->chroma = !!vsapi->propGetInt(in, "chroma", 0, &error);
+        if (error) {
+            d->chroma = false;
+        }
+        if (d->chroma && d->vi->format->id != pfYUV444PS) {
+            return set_error("clip format must be YUV444 when \"chroma\" is true");
+        }
+
+        const int device_id = [&] {
+            const int value = int64ToIntS(
+                vsapi->propGetInt(in, "device_id", 0, &error));
+            return error ? 0 : value;
+        }();
+        checkError(cuInit(0));
+        int device_count;
+        checkError(cuDeviceGetCount(&device_count));
+        if (device_id < 0 || device_id >= device_count) {
+            return set_error(
+                "invalid device ID (" + std::to_string(device_id) + ")");
+        }
+        checkError(cuDeviceGet(&d->device, device_id));
+        checkError(cuDevicePrimaryCtxRetain(&d->context, d->device));
+        primary_context_retained = true;
+        checkError(cuCtxPushCurrent(d->context));
+        context_pushed = true;
+        const float extractor = [&] {
+            const int exponent = int64ToIntS(
+                vsapi->propGetInt(in, "extractor_exp", 0, &error));
+            return error ? 0.0f : (exponent ? std::ldexp(1.0f, exponent) : 0.0f);
+        }();
+        std::vector<RollingGroup> groups;
+        const int source_width = chunk_size + 4 * d->radius;
+        const int temporal_width = 2 * d->radius + 1;
+        const int centers = chunk_size + 2 * d->radius;
+        const int clips = d->final_ ? 2 : 1;
+        const int graph_planes = d->chroma ? 3 : 1;
+        const int max_width = d->process[0] ? width :
+            width >> d->vi->format->subSamplingW;
+        const int max_height = d->process[0] ? height :
+            height >> d->vi->format->subSamplingH;
+        int process_mask = 0;
+        for (int plane = 0; plane < d->vi->format->numPlanes; ++plane) {
+            process_mask |= static_cast<int>(d->process[plane]) << plane;
+        }
+        if (
+            max_width > std::numeric_limits<int>::max() - 255 ||
+            max_height > 65535
+        ) {
+            return set_error("clip dimensions exceed CUDA grid limits");
+        }
+        size_t temporal_stride = static_cast<size_t>(max_width) * max_height;
+        size_t source_offset = temporal_stride * source_width * graph_planes;
+        size_t scratch_offset = temporal_stride * temporal_width * 2 * graph_planes;
+        if (
+            source_offset > std::numeric_limits<int>::max() ||
+            scratch_offset > std::numeric_limits<int>::max()) {
+            return set_error("clip dimensions exceed CUDA indexing limits");
+        }
+        size_t source_rows = 0, output_rows = 0;
+        if (d->chroma) {
+            source_rows = static_cast<size_t>(source_width) * height * clips * 3;
+            output_rows = static_cast<size_t>(chunk_size) * 6 * height;
+            groups.push_back({
+                0, 3, width, height, 0, 0, {}, {}, {},
+                sigma[0], sigma[1], sigma[2], block_step[0], bm_range[0],
+                ps_num[0], ps_range[0]
+            });
+            for (int plane = 0; plane < 3; ++plane) {
+                d->output_plane_rows[plane] = static_cast<size_t>(plane) * 2 * height;
+                d->output_step_rows[plane] = static_cast<size_t>(6) * height;
+            }
+        } else {
+            for (int plane = 0; plane < d->vi->format->numPlanes; ++plane) {
+                if (!d->process[plane]) {
+                    continue;
+                }
+                const int plane_width = plane ?
+                    width >> d->vi->format->subSamplingW : width;
+                const int plane_height = plane ?
+                    height >> d->vi->format->subSamplingH : height;
+                groups.push_back({
+                    plane, 1, plane_width, plane_height, source_rows,
+                    output_rows, {}, {}, {}, sigma[plane], 0.0f, 0.0f,
+                    block_step[plane], bm_range[plane], ps_num[plane],
+                    ps_range[plane]
+                });
+                const size_t plane_source_rows = static_cast<size_t>(clips) *
+                    source_width * plane_height;
+                const size_t plane_output_rows = static_cast<size_t>(chunk_size) *
+                    2 * plane_height;
+                source_rows += plane_source_rows;
+                d->output_plane_rows[plane] = output_rows;
+                d->output_step_rows[plane] = static_cast<size_t>(2) * plane_height;
+                output_rows += plane_output_rows;
+            }
+        }
+        d->source_rows = source_rows;
+        d->output_rows = output_rows;
+        const size_t pitch_min = static_cast<size_t>(max_width) * sizeof(float);
+        size_t pitch;
+        checkError(cuMemAllocPitch(
+            &d->resource.d_src.data, &pitch, pitch_min, source_rows, 4));
+        if (
+            pitch > static_cast<size_t>(std::numeric_limits<int>::max()) ||
+            pitch % sizeof(float)
+        ) {
+            return set_error("device pitch exceeds the supported range");
+        }
+        d->d_pitch = static_cast<int>(pitch);
+        const size_t d_stride = pitch / sizeof(float);
+        temporal_stride = d_stride * max_height;
+        source_offset = temporal_stride * source_width * graph_planes;
+        scratch_offset = temporal_stride * temporal_width * 2 * graph_planes;
+        if (
+            source_offset > std::numeric_limits<int>::max() ||
+            scratch_offset > std::numeric_limits<int>::max()) {
+            return set_error("device pitch exceeds CUDA indexing limits");
+        }
+        const size_t scratch_rows = static_cast<size_t>(graph_planes) *
+            temporal_width * 2 * max_height;
+        const size_t scratch_bytes = scratch_rows * pitch;
+        const size_t source_bytes = source_rows * pitch;
+        const size_t output_bytes = output_rows * pitch;
+        checkError(cuMemAlloc(&d->resource.d_scratch.data, scratch_bytes));
+        checkError(cuMemAlloc(&d->resource.d_accum.data, output_bytes));
+        checkError(cuMemAllocHost(
+            reinterpret_cast<void **>(&d->resource.h_src.data), source_bytes));
+        checkError(cuMemAllocHost(
+            reinterpret_cast<void **>(&d->resource.h_output.data), output_bytes));
+        const size_t params_count = 1 + static_cast<size_t>(centers);
+        const size_t params_bytes = params_count * sizeof(int);
+        checkError(cuMemAlloc(&d->resource.d_params.data, params_bytes));
+        checkError(cuMemAllocHost(
+            reinterpret_cast<void **>(&d->resource.h_params.data), params_bytes));
+        checkError(cuStreamCreate(&d->resource.stream.data, CU_STREAM_NON_BLOCKING));
+
+        for (auto & group : groups) {
+            const int plane = group.first_plane;
+            const auto result = compile(
+                group.width, group.height, d->d_pitch / sizeof(float),
+                group.sigma, group.block_step, group.bm_range,
+                d->radius, group.ps_num, group.ps_range,
+                d->chroma, d->chroma ? sigma[1] : 0.0f,
+                d->chroma ? sigma[2] : 0.0f,
+                d->final_, true,
+                d->bm_error_s[plane], d->transform_2d_s[plane],
+                d->transform_1d_s[plane],
+                extractor, d->device);
+            if (std::holds_alternative<std::string>(result)) {
+                return set_error(std::get<std::string>(result));
+            }
+            d->modules[plane] = std::get<CUmodule>(result);
+            checkError(cuModuleGetFunction(
+                &group.bm3d, d->modules[plane], "bm3d"));
+            checkError(cuModuleGetFunction(
+                &group.scatter, d->modules[plane], "rolling_scatter"));
+            checkError(cuModuleGetFunction(
+                &group.normalize, d->modules[plane], "rolling_normalize"));
+        }
+        const auto graph = get_rolling_graphexec(
+            d->resource.d_accum, d->resource.d_scratch, d->resource.d_src,
+            d->resource.h_src, d->resource.h_output, d->resource.d_params,
+            d->resource.h_params, width, height, d->d_pitch / sizeof(float),
+            block_step, d->radius, chunk_size,
+            process_mask,
+            d->vi->format->numPlanes, d->vi->format->subSamplingW,
+            d->vi->format->subSamplingH, d->chroma, d->final_, extractor,
+            d->context, groups);
+        if (std::holds_alternative<std::string>(graph)) {
+            return set_error(std::get<std::string>(graph));
+        }
+        d->resource.graphexec = std::get<CUgraphExec>(graph);
+        cuCtxPopCurrent(nullptr);
+        context_pushed = false;
+        primary_context_retained = false;
+        vsapi->createFilter(
+            in, out, "BM3Dv2",
+            RollingInit, RollingGetFrame, RollingFree,
+            fmParallelRequests, 0, d.release(), core);
     } catch (const std::bad_alloc &) {
         cleanup();
         vsapi->setError(out, "BM3Dv2 rolling: memory allocation failed");
@@ -1922,30 +2099,40 @@ static void RollingCreate(
     }
 }
 
-static VSMap * copy_bm3d_args(const VSMap *in, const VSAPI *vsapi) noexcept {
-    VSMap *result = vsapi->createMap();
+static VSMap * copy_bm3d_args(
+    const VSMap *in, const VSAPI *vsapi
+) noexcept {
+    VSMap * result = vsapi->createMap();
     for (int key_index = 0; key_index < vsapi->propNumKeys(in); ++key_index) {
-        const char *key = vsapi->propGetKey(in, key_index);
-        if (std::string_view { key } == "temporal_mode" ||
+        const char * key = vsapi->propGetKey(in, key_index);
+        if (
+            std::string_view { key } == "temporal_mode" ||
             std::string_view { key } == "rolling_chunk" ||
             std::string_view { key } == "rolling_cache_chunks" ||
-            std::string_view { key } == "rolling_cache_limit") continue;
+            std::string_view { key } == "rolling_cache_limit"
+        ) {
+            continue;
+        }
         const int elements = vsapi->propNumElements(in, key);
         const int type = vsapi->propGetType(in, key);
         for (int index = 0; index < elements; ++index) {
             if (type == ptInt) {
-                vsapi->propSetInt(result, key,
+                vsapi->propSetInt(
+                    result, key,
                     vsapi->propGetInt(in, key, index, nullptr), paAppend);
             } else if (type == ptFloat) {
-                vsapi->propSetFloat(result, key,
+                vsapi->propSetFloat(
+                    result, key,
                     vsapi->propGetFloat(in, key, index, nullptr), paAppend);
             } else if (type == ptNode) {
                 auto node = vsapi->propGetNode(in, key, index, nullptr);
                 vsapi->propSetNode(result, key, node, paAppend);
                 vsapi->freeNode(node);
             } else if (type == ptData) {
-                const char *data = vsapi->propGetData(in, key, index, nullptr);
-                vsapi->propSetData(result, key, data,
+                const char * data =
+                    vsapi->propGetData(in, key, index, nullptr);
+                vsapi->propSetData(
+                    result, key, data,
                     vsapi->propGetDataSize(in, key, index, nullptr), paAppend);
             }
         }
@@ -2177,25 +2364,41 @@ static void VS_CC BM3Dv2Create(
     const bool temporal_mode_supplied =
         vsapi->propNumElements(in, "temporal_mode") >= 0;
     if (temporal_mode_supplied) {
-        const char * value = vsapi->propGetData(in, "temporal_mode", 0, &error);
-        const int size = vsapi->propGetDataSize(in, "temporal_mode", 0, &error);
-        if (error) { vsapi->setError(out, "BM3Dv2: \"temporal_mode\" must be a string"); return; }
+        const char * value = vsapi->propGetData(
+            in, "temporal_mode", 0, &error);
+        const int size = vsapi->propGetDataSize(
+            in, "temporal_mode", 0, &error);
+        if (error) {
+            vsapi->setError(
+                out, "BM3Dv2: \"temporal_mode\" must be a string");
+            return;
+        }
         temporal_mode.assign(value, size);
     }
-    if (temporal_mode != "legacy" && temporal_mode != "rolling") {
-        vsapi->setError(out, "BM3Dv2: \"temporal_mode\" must be one of legacy or rolling");
+    if (
+        temporal_mode != "legacy" && temporal_mode != "rolling"
+    ) {
+        vsapi->setError(
+            out,
+            "BM3Dv2: \"temporal_mode\" must be one of legacy or rolling");
         return;
     }
-    const bool chunk_supplied = vsapi->propNumElements(in, "rolling_chunk") >= 0;
+
+    const bool chunk_supplied =
+        vsapi->propNumElements(in, "rolling_chunk") >= 0;
     if (chunk_supplied && temporal_mode != "rolling") {
-        vsapi->setError(out, "BM3Dv2: \"rolling_chunk\" is valid only when temporal_mode is rolling");
+        vsapi->setError(
+            out,
+            "BM3Dv2: \"rolling_chunk\" is valid only when temporal_mode is rolling");
         return;
     }
     int rolling_chunk = 4;
     if (chunk_supplied) {
-        rolling_chunk = int64ToIntS(vsapi->propGetInt(in, "rolling_chunk", 0, &error));
+        rolling_chunk = int64ToIntS(
+            vsapi->propGetInt(in, "rolling_chunk", 0, &error));
         if (error || rolling_chunk < 1 || rolling_chunk > 64) {
-            vsapi->setError(out, "BM3Dv2: \"rolling_chunk\" must be in range [1, 64]");
+            vsapi->setError(
+                out, "BM3Dv2: \"rolling_chunk\" must be in range [1, 64]");
             return;
         }
     }
@@ -2267,10 +2470,14 @@ static void VS_CC BM3Dv2Create(
     const int source_planes = src_vi->format->numPlanes;
     error = 0;
     int radius = int64ToIntS(vsapi->propGetInt(in, "radius", 0, &error));
-    if (error) radius = 0;
+    if (error) {
+        radius = 0;
+    }
     if (temporal_mode_supplied && temporal_mode == "rolling" && radius <= 0) {
         vsapi->freeNode(src);
-        vsapi->setError(out, "BM3Dv2: rolling temporal mode requires radius greater than zero");
+        vsapi->setError(
+            out,
+            "BM3Dv2: rolling temporal mode requires radius greater than zero");
         return;
     }
     for (int i = 0; i < src_vi->format->numPlanes; ++i) {
@@ -2282,31 +2489,11 @@ static void VS_CC BM3Dv2Create(
         return ;
     }
 
-    if (radius > 0) {
+    if (radius > 0 && temporal_mode == "rolling") {
         vsapi->freeNode(src);
-        if (temporal_mode == "rolling") {
-            RollingCreate(
-                in, out, rolling_chunk, rolling_cache_chunks,
-                rolling_cache_limit, cache_adaptive, core, vsapi);
-        } else {
-            auto plugin = vsapi->getPluginById(PLUGIN_ID, core);
-            auto map = copy_bm3d_args(in, vsapi);
-            auto bm_map = vsapi->invoke(plugin, "BM3D", map);
-            vsapi->freeMap(map);
-            if (const char * invoke_error = vsapi->getError(bm_map)) { vsapi->setError(out, invoke_error); vsapi->freeMap(bm_map); return; }
-            auto original = vsapi->propGetNode(in, "clip", 0, nullptr);
-            vsapi->propSetNode(bm_map, "src", original, paReplace);
-            vsapi->freeNode(original);
-            for (int plane = 0; plane < source_planes; ++plane)
-                if (process[plane]) vsapi->propSetInt(bm_map, "planes", plane, paAppend);
-            auto aggregate = vsapi->invoke(plugin, "VAggregate", bm_map);
-            vsapi->freeMap(bm_map);
-            if (const char * invoke_error = vsapi->getError(aggregate)) { vsapi->setError(out, invoke_error); vsapi->freeMap(aggregate); return; }
-            auto node = vsapi->propGetNode(aggregate, "clip", 0, nullptr);
-            vsapi->freeMap(aggregate);
-            vsapi->propSetNode(out, "clip", node, paReplace);
-            vsapi->freeNode(node);
-        }
+        RollingCreate(
+            in, out, rolling_chunk, rolling_cache_chunks,
+            rolling_cache_limit, cache_adaptive, core, vsapi);
         return;
     }
 
