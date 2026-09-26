@@ -1016,14 +1016,7 @@ std::variant<cudaGraphExec_t, std::string> get_rolling_graphexec(
     size_t source_rows = 0;
     size_t accum_rows = 0;
     if (chroma) {
-        groups.push_back(Group {
-            .first_plane = 0,
-            .planes = 3,
-            .width = width,
-            .height = height,
-            .source_row = 0,
-            .accum_row = 0
-        });
+        groups.push_back(Group{0, 3, width, height, 0, 0});
         source_rows = static_cast<size_t>(clips) * 3 * source_width * height;
         accum_rows = static_cast<size_t>(chunk_size) * 3 * 2 * height;
     } else {
@@ -1033,14 +1026,7 @@ std::variant<cudaGraphExec_t, std::string> get_rolling_graphexec(
             }
             const int plane_width = plane ? width >> subsampling_w : width;
             const int plane_height = plane ? height >> subsampling_h : height;
-            groups.push_back(Group {
-                .first_plane = plane,
-                .planes = 1,
-                .width = plane_width,
-                .height = plane_height,
-                .source_row = source_rows,
-                .accum_row = accum_rows
-            });
+            groups.push_back(Group{plane, 1, plane_width, plane_height, source_rows, accum_rows});
             source_rows += static_cast<size_t>(clips) * source_width * plane_height;
             accum_rows += static_cast<size_t>(chunk_size) * 2 * plane_height;
         }
