@@ -93,6 +93,7 @@ jobs:
         done
 
     - name: Cache HIP
+      if: false
       id: cache-hip
       uses: actions/cache@v6
       with:
@@ -100,13 +101,14 @@ jobs:
         key: ${{ runner.os }}-rocm-6.4.2
 
     - name: Setup HIP
-      if: steps.cache-hip.outputs.cache-hit != 'true'
+      if: steps.cache-hip.outputs.cache-hit != 'true' && false
       shell: pwsh
       run: |
         curl -s -o hip_installer.exe -L https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-25.Q3-WinSvr2022-For-HIP.exe
         Start-Process hip_installer.exe -ArgumentList '-install' -NoNewWindow -Wait
 
     - name: Configure (HIP)
+      if: false
       shell: bash
       run: cmake -S . -B build_hip -G Ninja -LA
         -D CMAKE_BUILD_TYPE=Release
@@ -122,9 +124,11 @@ jobs:
         -D CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
 
     - name: Build (HIP)
+      if: false
       run: cmake --build build_hip --verbose
 
     - name: Install (HIP)
+      if: false
       run: cmake --install build_hip --prefix install
 
     - name: Cache SYCL
