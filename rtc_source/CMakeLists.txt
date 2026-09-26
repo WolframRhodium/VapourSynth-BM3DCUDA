@@ -35,7 +35,7 @@ else()
         endif()
 
         if (CMAKE_SYSTEM_NAME STREQUAL "Windows")
-            target_link_libraries(bm3dcuda_rtc PRIVATE Ws2_32)
+            target_link_libraries(bm3dcuda_rtc PRIVATE Ws2_32 ntdll)
         endif()
     else()
         if (USE_NVRTC_STATIC)
